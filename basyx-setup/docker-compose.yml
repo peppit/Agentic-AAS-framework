@@ -76,6 +76,22 @@ services:
     restart: always
     extra_hosts:
       - "host.docker.internal:host-gateway"
+  
+  opcua-aas-bridge:
+    build:
+      context: ../opcua-aas-bridge
+      dockerfile: Dockerfile
+    container_name: opcua-aas-bridge
+    environment:
+      - OPCUA_ENDPOINT=opc.tcp://host.docker.internal:4840
+      - AAS_ENDPOINT=http://aas-env:8081
+    restart: always
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      aas-env:
+        condition: service_healthy
+  
   aas-discovery:
     image: eclipsebasyx/aas-discovery:2.0.0-SNAPSHOT
     container_name: aas-discovery
