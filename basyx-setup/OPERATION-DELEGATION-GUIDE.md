@@ -6,14 +6,14 @@ This guide shows how to add delegated operations to your AASX file so they can b
 
 You can add operations programmatically via the BaSyx REST API. These will work immediately but won't persist after Docker restart.
 
-### PowerShell Script to Add HoistDown Operation
+### PowerShell Script to Add Hoist_Down Operation
 
 ```powershell
 $submodelId = "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTAxMF81MTUwXzExNTJfMTEwMg"
 
 $operation = @{
     modelType = "Operation"
-    idShort = "HoistDown"
+    idShort = "Hoist_Down"
     description = @(
         @{
             language = "en"
@@ -32,11 +32,11 @@ $operation = @{
                 modelType = "Property"
                 idShort = "duration_ms"
                 valueType = "xs:long"
-                value = "5000"
+                value = "10000"
                 description = @(
                     @{
                         language = "en"
-                        text = "Pulse duration in milliseconds (default: 5000)"
+                        text = "Pulse duration in milliseconds (fixed at 10000)"
                     }
                 )
             }
@@ -215,7 +215,7 @@ basyx-setup/aas/IlmatarAAS.aasx
 Right-click on submodel → Add SubmodelElement → Operation
 
 **Operation Properties:**
-- **idShort**: `HoistDown`
+- **idShort**: `Hoist_Down`
 - **semanticId**: (optional) `https://example.com/ids/cd/CraneHoistDown`
 - **description**: "Lower the crane hoist"
 
@@ -228,8 +228,8 @@ Right-click on submodel → Add SubmodelElement → Operation
 Add OperationVariable → Property:
 - **idShort**: `duration_ms`
 - **valueType**: `xs:long`
-- **value**: `5000`
-- **description**: "Pulse duration in milliseconds"
+- **value**: `10000`
+- **description**: "Pulse duration in milliseconds (fixed at 10000)"
 
 **Output Variables:**
 1. Add OperationVariable → Property:
@@ -245,9 +245,12 @@ Add OperationVariable → Property:
    - **valueType**: `xs:long`
 
 ### 5. Repeat for Other Operations
-- **HoistUp**: `http://opcua-operation-service:8087/crane/hoist-up`
-- **TrolleyLeft**: `http://opcua-operation-service:8087/crane/trolley-left`
-- **TrolleyRight**: `http://opcua-operation-service:8087/crane/trolley-right`
+- **Hoist_Up**: `http://opcua-operation-service:8087/crane/hoist-up`
+- **Trolley_Forward**: `http://opcua-operation-service:8087/crane/trolley-forward`
+- **Trolley_Backward**: `http://opcua-operation-service:8087/crane/trolley-backward`
+- **Bridge_Forward**: `http://opcua-operation-service:8087/crane/bridge-forward`
+- **Bridge_Backward**: `http://opcua-operation-service:8087/crane/bridge-backward`
+- **DriveToTarget**: `http://opcua-operation-service:8087/crane/drive-to-target`
 
 ### 6. Save and Reload
 

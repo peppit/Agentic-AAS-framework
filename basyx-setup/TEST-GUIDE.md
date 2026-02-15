@@ -20,7 +20,7 @@ Your Request → BaSyx AAS → Operation Service → OPC UA Server
                               Writes TRUE to:
                               ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Down
                               
-                              Waits 5 seconds
+                              Waits 10 seconds
                               
                               Writes FALSE to:
                               ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Down
@@ -38,7 +38,7 @@ Your Request → BaSyx AAS → Operation Service → OPC UA Server
 6. **Watch your OPC UA client** (e.g., UaExpert)
    - Node `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Down` should:
    - Change to `true`
-   - Stay true for 5 seconds
+    - Stay true for 10 seconds
    - Change back to `false`
 
 ### Method 2: Test via BaSyx REST API
@@ -59,7 +59,7 @@ Invoke-WebRequest `
     -ContentType "application/json"
 ```
 
-**Note**: You may get a 500 error in the response, but **the operation still executes successfully**. Check your OPC UA client to confirm the write happened.
+**Note**: A 424 error in BaSyx usually means the delegation URL returned 404. Check the operation service endpoint exists.
 
 ### Method 3: Test OPC UA Service Directly (Bypass BaSyx)
 
@@ -110,15 +110,14 @@ All services should show as "Up" or "healthy".
 - **URL**: http://localhost:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTAxMF81MTUwXzExNTJfMTEwMg/submodel-elements/Hoist_Down
 - **Delegation Qualifier**: `http://opcua-operation-service:8087/crane/hoist-down`
 - **OPC UA Node**: `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Down`
-- **Pulse Duration**: 5000 ms (5 seconds)
+- **Pulse Duration**: 10000 ms (10 seconds)
 
 ### Input Parameters
 
-- `down`: boolean value (true)
+- None (input is ignored for pulse operations)
 
 ### Output Parameters
 
-- `success`: boolean
 - `status`: string (SUCCESS/ERROR)
 - `message`: string
 - `duration_ms`: long
@@ -191,6 +190,20 @@ docker logs opcua-operation-service
 docker-compose restart opcua-operation-service
 docker logs opcua-operation-service
 ```
+
+## 🧪 DriveToTarget Quick Test
+
+```powershell
+# Direct test - bypasses AAS
+Invoke-WebRequest `
+    -Uri "http://localhost:8087/crane/drive-to-target" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body "[{\"value\":{\"idShort\":\"Bridge\",\"value\":\"200.0\"}},{\"value\":{\"idShort\":\"Trolley\",\"value\":\"50.0\"}},{\"value\":{\"idShort\":\"Hoist\",\"value\":\"12.5\"}}]" `
+    -UseBasicParsing
+```
+
+Expected result: `Target.*` nodes are updated and `DriveToTarget.Execute` is triggered.
 
 ## 📝 Next Steps
 

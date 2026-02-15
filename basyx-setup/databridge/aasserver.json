@@ -1,6 +1,21 @@
 [
   {
-    "uniqueId": "aasServer",
-    "submodelEndpoint": "http://aas-env:8081/submodels"
+    "uniqueId": "HoistSpeedSub",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTAxMF81MTUwXzExNTJfMTEwMg",
+    "idShortPath": "Hoist_Speed",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "TrolleySpeedSub",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTAxMF81MTUwXzExNTJfMTEwMg",
+    "idShortPath": "Trolley_Speed",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "BridgeSpeedSub",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTAxMF81MTUwXzExNTJfMTEwMg",
+    "idShortPath": "Bridge_Speed",
+    "api": "DotAAS-V3"
   }
+
 ]

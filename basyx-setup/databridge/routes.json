@@ -1,14 +1,24 @@
 [
   {
-    "routeId": "opcua-to-aas",
+    "routeId": "opcua-to-aas-hoist",
     "datasource": "hoistSpeed",
-    "transformers": [
-      "opcuaToAasTransformer"
-    ],
-    "datasinks": [
-      "aasServer"
-    ],
+    "transformers": ["dataValueToJson", "jsonataExtractValue"],
+    "datasinks": ["HoistSpeedSub"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "opcua-to-aas-trolley",
+    "datasource": "trolleySpeed",
+    "transformers": ["dataValueToJson", "jsonataExtractValue"],
+    "datasinks": ["TrolleySpeedSub"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "opcua-to-aas-bridge",
+    "datasource": "bridgeSpeed",
+    "transformers": ["dataValueToJson", "jsonataExtractValue"],
+    "datasinks": ["BridgeSpeedSub"],
     "trigger": "event"
   }
-]
 
+]

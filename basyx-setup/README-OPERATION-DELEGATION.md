@@ -76,7 +76,7 @@ docker logs opcua-operation-service
 
 ```powershell
 # Test the service directly (bypasses BaSyx) - recommended first test
-Invoke-WebRequest -Uri "http://localhost:8087/crane/hoist-down" -Method Post
+Invoke-WebRequest -Uri "http://localhost:8087/crane/hoist-down" -Method Post -UseBasicParsing
 
 # Expected response:
 # StatusCode: 200
@@ -119,10 +119,9 @@ When you invoke the operation:
 
 The Spring Boot service:
 - Receives HTTP POST from BaSyx
-- Accepts raw JSON body (not parsed to avoid deserialization issues)
-- Writes `true` to OPC UA node
-- Waits 10 seconds (configurable via `PULSE_DURATION_MS`)
-- Writes `false` to OPC UA node
+- For pulse operations, ignores input and writes a 10-second boolean pulse
+- For `DriveToTarget`, parses `Bridge`, `Trolley`, and `Hoist` inputs
+- Writes target coordinates, then triggers `DriveToTarget.Execute`
 - Returns JSON: `{"status": "SUCCESS", "message": "...", "duration_ms": 10000}`
 
 ### 4. OPC UA Communication
@@ -144,11 +143,15 @@ Using Eclipse Milo:
 | **Trolley_Backward** | Move trolley backward | `ns=7;s=...Trolley.Backward` | 10 seconds | ✅ Working |
 | **Bridge_Forward** | Move bridge forward | `ns=7;s=...Bridge.Forward` | 10 seconds | ✅ Working |
 | **Bridge_Backward** | Move bridge backward | `ns=7;s=...Bridge.Backward` | 10 seconds | ✅ Working |
+| **DriveToTarget** | Move to target coordinates | `Target.Bridge/Trolley/Hoist` + `DriveToTarget.Execute` | N/A | ✅ Working |
 
-All operations:
-- Accept optional `duration_ms` parameter (not yet implemented)
+Pulse operations:
+- Ignore input parameters and use a fixed 10-second pulse
 - Return JSON with `status`, `message`, and `duration_ms`
-- Create boolean pulses (true → wait → false)
+
+DriveToTarget:
+- Accepts `Bridge`, `Trolley`, `Hoist` inputs
+- Returns JSON with `status` and `message`
 
 ## 🆚 Comparison: Operation Delegation vs. Trigger Property
 
@@ -189,14 +192,11 @@ docker-compose logs -f
 ### Health Checks
 
 ```powershell
-# Check if operation service is running
-Invoke-WebRequest -Uri "http://localhost:8087/actuator/health"
-
 # Check if operations exist in AAS
-Invoke-WebRequest -Uri "http://localhost:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTAxMF81MTUwXzExNTJfMTEwMg/submodel-elements"
+Invoke-WebRequest -Uri "http://localhost:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTAxMF81MTUwXzExNTJfMTEwMg/submodel-elements" -UseBasicParsing
 
-# Test OPC UA connection
-docker exec -it opcua-operation-service curl http://localhost:8087/crane/hoist-down -X POST
+# Test operation service endpoint
+Invoke-WebRequest -Uri "http://localhost:8087/crane/hoist-down" -Method Post -UseBasicParsing
 ```
 
 ## 🛠️ Troubleshooting
@@ -213,11 +213,11 @@ docker exec -it opcua-operation-service curl http://localhost:8087/crane/hoist-d
 docker-compose restart aas-env
 ```
 
-### Problem: Operation returns 500 error but OPC UA still works
+### Problem: Operation returns 424 in BaSyx
 
-**Cause:** This was a JSON serialization issue with AAS4J model classes
+**Cause:** The delegation URL is not implemented (404) in the operation service.
 
-**Solution:** ✅ **FIXED** - Changed response format from `OperationVariable[]` to simple `Map<String, Object>` JSON. The operation service now returns plain JSON that BaSyx can properly deserialize.
+**Solution:** Ensure the endpoint exists in the service and rebuild the container.
 
 ### Problem: Operation executes but OPC UA doesn't change
 

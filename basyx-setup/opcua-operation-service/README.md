@@ -22,16 +22,19 @@ AAS Web UI → BaSyx Environment → Operation Delegation → This Service → O
 
 3. **This Service**: Receives the HTTP POST request and translates it to OPC UA write operations
 
-4. **OPC UA**: Writes boolean pulse (true → 5 seconds → false) to crane control nodes
+4. **OPC UA**: Writes boolean pulse (true → 10 seconds → false) to crane control nodes
 
 ## Supported Operations
 
 | Operation | Endpoint | OPC UA Node |
 |-----------|----------|-------------|
-| HoistDown | `/crane/hoist-down` | `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Down` |
-| HoistUp | `/crane/hoist-up` | `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Up` |
-| TrolleyLeft | `/crane/trolley-left` | `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Trolley.Left` |
-| TrolleyRight | `/crane/trolley-right` | `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Trolley.Right` |
+| Hoist_Down | `/crane/hoist-down` | `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Down` |
+| Hoist_Up | `/crane/hoist-up` | `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Up` |
+| Trolley_Forward | `/crane/trolley-forward` | `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Trolley.Forward` |
+| Trolley_Backward | `/crane/trolley-backward` | `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Trolley.Backward` |
+| Bridge_Forward | `/crane/bridge-forward` | `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Bridge.Forward` |
+| Bridge_Backward | `/crane/bridge-backward` | `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Bridge.Backward` |
+| DriveToTarget | `/crane/drive-to-target` | `Target.Bridge`, `Target.Trolley`, `Target.Hoist`, `DriveToTarget.Execute` |
 
 ## Configuration
 
@@ -85,56 +88,30 @@ mvn spring-boot:run
 
 ## API Examples
 
-### Invoke HoistDown (default 5s duration)
+### Invoke Hoist_Down (default 10s duration)
 ```bash
 curl -X POST http://localhost:8087/crane/hoist-down \
   -H "Content-Type: application/json"
 ```
 
-### Invoke HoistDown with custom duration
+### Invoke DriveToTarget with parameters
 ```bash
-curl -X POST http://localhost:8087/crane/hoist-down \
+curl -X POST http://localhost:8087/crane/drive-to-target \
   -H "Content-Type: application/json" \
   -d '[
-    {
-      "value": {
-        "modelType": "Property",
-        "idShort": "duration",
-        "value": "10000",
-        "valueType": "xs:long"
-      }
-    }
+    {"value":{"idShort":"Bridge","value":"200.0"}},
+    {"value":{"idShort":"Trolley","value":"50.0"}},
+    {"value":{"idShort":"Hoist","value":"12.5"}}
   ]'
 ```
 
 ### Expected Response
 ```json
-[
-  {
-    "value": {
-      "modelType": "Property",
-      "idShort": "status",
-      "value": "SUCCESS",
-      "valueType": "xs:string"
-    }
-  },
-  {
-    "value": {
-      "modelType": "Property",
-      "idShort": "message",
-      "value": "HoistDown executed successfully",
-      "valueType": "xs:string"
-    }
-  },
-  {
-    "value": {
-      "modelType": "Property",
-      "idShort": "duration_ms",
-      "value": "5000",
-      "valueType": "xs:long"
-    }
-  }
-]
+{
+  "status": "SUCCESS",
+  "message": "HoistDown executed successfully",
+  "duration_ms": 10000
+}
 ```
 
 ## Integration with BaSyx
@@ -144,7 +121,7 @@ To enable operation delegation in your AASX file, add operations with delegation
 ```json
 {
   "modelType": "Operation",
-  "idShort": "HoistDown",
+  "idShort": "Hoist_Down",
   "description": [
     {
       "language": "en",
@@ -163,7 +140,7 @@ To enable operation delegation in your AASX file, add operations with delegation
         "modelType": "Property",
         "idShort": "duration_ms",
         "valueType": "xs:long",
-        "description": [{"language": "en", "text": "Pulse duration in milliseconds"}]
+        "description": [{"language": "en", "text": "Pulse duration in milliseconds (fixed at 10000)"}]
       }
     }
   ],
@@ -206,6 +183,7 @@ To enable operation delegation in your AASX file, add operations with delegation
 - Check BaSyx feature is enabled (enabled by default)
 - Verify qualifier type is exactly `"invocationDelegation"`
 - Check service URL is accessible from BaSyx container
+- A 404 from this service shows up as a 424 in BaSyx
 - Review BaSyx logs for delegation errors
 
 ### Pulse not visible in OPC UA

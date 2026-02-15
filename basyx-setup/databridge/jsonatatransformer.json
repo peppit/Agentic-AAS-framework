@@ -1,8 +1,8 @@
 [
-  {
-    "uniqueId": "opcuaToAasTransformer",
-    "queryPath": "opcuaToAas.json",
-    "inputType": "JsonString",
-    "outputType": "AASSubmodelElement"
-  }
+	{
+		"uniqueId": "jsonataExtractValue",
+		"queryPath": "jsonExtractValue.json",
+		"inputType": "JsonString",
+		"outputType": "JsonString"
+	}
 ]
