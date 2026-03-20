@@ -1,8 +1,8 @@
 [
   {
 		"uniqueId": "hoistSpeed",
-		"nodeInformation": "ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Speed",
-		"serverUrl": "host.docker.internal",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Controls.Hoist.Speed",
+		"serverUrl": "10.210.1.12",
 		"serverPort": 4840,
 		"pathToService": "",
 		"parameters": {
@@ -17,8 +17,8 @@
 	},
 	{
 		"uniqueId": "trolleySpeed",
-		"nodeInformation": "ns=7;s=SCF.PLC.DX_Custom_V.Controls.Trolley.Speed",
-		"serverUrl": "host.docker.internal",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Controls.Trolley.Speed",
+		"serverUrl": "10.210.1.12",
 		"serverPort": 4840,
 		"pathToService": "",
 		"parameters": {
@@ -33,8 +33,56 @@
 	},
 	{
 		"uniqueId": "bridgeSpeed",
-		"nodeInformation": "ns=7;s=SCF.PLC.DX_Custom_V.Controls.Bridge.Speed",
-		"serverUrl": "host.docker.internal",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Controls.Bridge.Speed",
+		"serverUrl": "10.210.1.12",
+		"serverPort": 4840,
+		"pathToService": "",
+		"parameters": {
+			"allowedSecurityPolicies": "None",
+			"keyAlias": null,
+			"keyPassword": null,
+			"keyStoreType": null,
+			"keyStorePassword": null,
+			"keyStoreUrl": null,
+			"requestedPublishingInterval": 1000
+		}
+	},
+	{
+		"uniqueId": "hoistPositionmm",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Status.Hoist.Position.Position_mm",
+		"serverUrl": "10.210.1.12",
+		"serverPort": 4840,
+		"pathToService": "",
+		"parameters": {
+			"allowedSecurityPolicies": "None",
+			"keyAlias": null,
+			"keyPassword": null,
+			"keyStoreType": null,
+			"keyStorePassword": null,
+			"keyStoreUrl": null,
+			"requestedPublishingInterval": 1000
+		}
+	},
+	{
+		"uniqueId": "bridgePositionmm",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Status.Bridge.Position.Position_mm",
+		"serverUrl": "10.210.1.12",
+		"serverPort": 4840,
+		"pathToService": "",
+		"parameters": {
+			"allowedSecurityPolicies": "None",
+			"keyAlias": null,
+			"keyPassword": null,
+			"keyStoreType": null,
+			"keyStorePassword": null,
+			"keyStoreUrl": null,
+			"requestedPublishingInterval": 1000
+		}
+	},
+	{
+		"uniqueId": "trolleyPositionmm",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Status.Trolley.Position.Position_mm",
+		"serverUrl": "10.210.1.12",
 		"serverPort": 4840,
 		"pathToService": "",
 		"parameters": {

@@ -72,6 +72,18 @@ services:
       context: ./opcua-operation-service
       dockerfile: Dockerfile
     container_name: opcua-operation-service
+    environment:
+      - OPCUA_ENDPOINT=opc.tcp://10.210.1.12:4840
+      - OPCUA_AUTH_MODE=anonymous
+      - OPCUA_USERNAME=
+      - OPCUA_PASSWORD=
+      - OPCUA_SECURITY_MODE=None
+      - OPCUA_SECURITY_POLICY=None
+      - OPCUA_PULSE_EDGE_TRIGGER_ENABLED=false
+      - OPCUA_PULSE_LEADING_FALSE_DELAY_MS=100
+      - OPCUA_WRITE_BOOLEAN_NUMERIC_FALLBACK_ENABLED=true
+      - OPCUA_ACCESS_CODE=
+      - OPCUA_WATCHDOG_INCREMENT_ENABLED=false
     ports:
       - '8087:8087'
     restart: always

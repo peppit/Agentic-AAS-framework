@@ -24,13 +24,13 @@ A Java application that bridges OPC UA data to BaSyx AAS (Asset Administration S
 The bridge implements **bidirectional** communication:
 
 ### Direction 1: OPC UA → AAS (Real-time Monitoring)
-- **OPC UA Node**: `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Speed` (Crane hoist speed)
+- **OPC UA Node**: `ns=7;s=DX_Custom_V.Controls.Hoist.Speed` (Crane hoist speed)
 - **AAS Property**: `Hoist_Speed` in submodel `aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTAxMF81MTUwXzExNTJfMTEwMg`
 - **Update Method**: Subscription-based (1000ms sampling interval)
 
 ### Direction 2: AAS → OPC UA (Trigger-based Control)
 - **AAS Trigger Property**: `Hoist_Down_Trigger` (boolean property in same submodel)
-- **OPC UA Target Node**: `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Down` (Crane hoist down control)
+- **OPC UA Target Node**: `ns=7;s=DX_Custom_V.Controls.Hoist.Down` (Crane hoist down control)
 - **Update Method**: Polling every 1 second
 - **Pulse Behavior**: When trigger = `true`, writes `true` to OPC UA for 5 seconds, then `false`
 
@@ -46,7 +46,7 @@ To monitor different OPC UA nodes or AAS properties, edit the constants in `OpcU
 
 ```java
 private static final String OPC_UA_ENDPOINT = "opc.tcp://localhost:4840";
-private static final String OPC_UA_NODE_ID = "ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Speed";
+private static final String OPC_UA_NODE_ID = "ns=7;s=DX_Custom_V.Controls.Hoist.Speed";
 private static final String SUBMODEL_ID = "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTAxMF81MTUwXzExNTJfMTEwMg";
 private static final String PROPERTY_ID_SHORT = "Hoist_Speed";
 private static final String AAS_ENDPOINT = "http://localhost:8081";
@@ -77,19 +77,19 @@ java -jar target/opcua-aas-bridge-1.0-SNAPSHOT.jar
 Starting Bidirectional OPC UA <-> AAS Bridge...
 Connected to OPC UA server: opc.tcp://localhost:4840
 Created OPC UA subscription
-Monitoring OPC UA -> AAS: ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Speed -> Hoist_Speed
-Monitoring AAS -> OPC UA: Hoist_Down_Trigger -> ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Down
+Monitoring OPC UA -> AAS: ns=7;s=DX_Custom_V.Controls.Hoist.Speed -> Hoist_Speed
+Monitoring AAS -> OPC UA: Hoist_Down_Trigger -> ns=7;s=DX_Custom_V.Controls.Hoist.Down
 Bridge is running. Press Ctrl+C to stop.
 
 OPC UA value changed: 20.0
 Successfully updated AAS property Hoist_Speed: 20.0
 
 AAS operation triggered: Hoist_Down
-Writing to OPC UA: ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Down = true
+Writing to OPC UA: ns=7;s=DX_Custom_V.Controls.Hoist.Down = true
 Write successful! Status: StatusCode{name=Good, value=0x00000000, quality=good}
 Read back value: true (should be true)
 [5 seconds later]
-Writing to OPC UA: ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Down = false
+Writing to OPC UA: ns=7;s=DX_Custom_V.Controls.Hoist.Down = false
 Write successful! Status: StatusCode{name=Good, value=0x00000000, quality=good}
 Read back value: false (should be false)
 ```
@@ -214,7 +214,7 @@ Invoke-WebRequest -Uri "http://localhost:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNv
 ### Test 2: AAS → OPC UA (Control)
 
 1. Ensure bridge is running
-2. Open your OPC UA client (e.g., UaExpert) and navigate to node: `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Down`
+2. Open your OPC UA client (e.g., UaExpert) and navigate to node: `ns=7;s=DX_Custom_V.Controls.Hoist.Down`
 3. Trigger the operation via REST API (PowerShell):
    ```powershell
    Invoke-WebRequest -Uri "http://localhost:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTAxMF81MTUwXzExNTJfMTEwMg/submodel-elements/Hoist_Down_Trigger/$value" -Method Patch -Body '"true"' -ContentType "application/json"
@@ -252,7 +252,7 @@ To make the `Hoist_Down_Trigger` property persist across Docker restarts, you ne
 ### 2. Additional Trigger Properties
 
 Add more trigger properties for other crane operations:
-- `Hoist_Up_Trigger` → `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Up`
+- `Hoist_Up_Trigger` → `ns=7;s=DX_Custom_V.Controls.Hoist.Up`
 - `Trolley_Left_Trigger` → corresponding OPC UA node
 - `Trolley_Right_Trigger` → corresponding OPC UA node
 
@@ -274,8 +274,8 @@ Move hardcoded values to external config file (JSON/YAML):
   "opcua": {
     "endpoint": "opc.tcp://localhost:4840",
     "nodes": {
-      "hoist_speed": "ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Speed",
-      "hoist_down": "ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Down"
+      "hoist_speed": "ns=7;s=DX_Custom_V.Controls.Hoist.Speed",
+      "hoist_down": "ns=7;s=DX_Custom_V.Controls.Hoist.Down"
     }
   },
   "basyx": {

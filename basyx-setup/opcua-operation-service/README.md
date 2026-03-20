@@ -28,12 +28,12 @@ AAS Web UI → BaSyx Environment → Operation Delegation → This Service → O
 
 | Operation | Endpoint | OPC UA Node |
 |-----------|----------|-------------|
-| Hoist_Down | `/crane/hoist-down` | `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Down` |
-| Hoist_Up | `/crane/hoist-up` | `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Hoist.Up` |
-| Trolley_Forward | `/crane/trolley-forward` | `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Trolley.Forward` |
-| Trolley_Backward | `/crane/trolley-backward` | `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Trolley.Backward` |
-| Bridge_Forward | `/crane/bridge-forward` | `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Bridge.Forward` |
-| Bridge_Backward | `/crane/bridge-backward` | `ns=7;s=SCF.PLC.DX_Custom_V.Controls.Bridge.Backward` |
+| Hoist_Down | `/crane/hoist-down` | `ns=7;s=DX_Custom_V.Controls.Hoist.Down` |
+| Hoist_Up | `/crane/hoist-up` | `ns=7;s=DX_Custom_V.Controls.Hoist.Up` |
+| Trolley_Forward | `/crane/trolley-forward` | `ns=7;s=DX_Custom_V.Controls.Trolley.Forward` |
+| Trolley_Backward | `/crane/trolley-backward` | `ns=7;s=DX_Custom_V.Controls.Trolley.Backward` |
+| Bridge_Forward | `/crane/bridge-forward` | `ns=7;s=DX_Custom_V.Controls.Bridge.Forward` |
+| Bridge_Backward | `/crane/bridge-backward` | `ns=7;s=DX_Custom_V.Controls.Bridge.Backward` |
 | DriveToTarget | `/crane/drive-to-target` | `Target.Bridge`, `Target.Trolley`, `Target.Hoist`, `DriveToTarget.Execute` |
 
 ## Configuration
