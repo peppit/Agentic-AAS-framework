@@ -1,0 +1,4 @@
+com\konecranes\opcua\controller\CraneOperationController$OperationPreconditionException.class
+com\konecranes\opcua\controller\CraneOperationController.class
+com\konecranes\opcua\OpcUaOperationServiceApplication.class
+com\konecranes\opcua\service\OpcUaService.class
