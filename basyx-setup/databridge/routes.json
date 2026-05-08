@@ -24,21 +24,21 @@
     "routeId": "opcua-to-aas-trolley-position",
     "datasource": "trolleyPositionmm",
     "transformers": ["dataValueToJson", "jsonataExtractValue"],
-    "datasinks": ["TrolleyPositionSub"],
+    "datasinks": ["TrolleyPositionSub", "TrolleyPositionSub2"],
     "trigger": "event"
   },
   {
     "routeId": "opcua-to-aas-bridge-position",
     "datasource": "bridgePositionmm",
     "transformers": ["dataValueToJson", "jsonataExtractValue"],
-    "datasinks": ["BridgePositionSub"],
+    "datasinks": ["BridgePositionSub", "BridgePositionSub2"],
     "trigger": "event"
   },
   {
     "routeId": "opcua-to-aas-hoist-position",
     "datasource": "hoistPositionmm",
     "transformers": ["dataValueToJson", "jsonataExtractValue"],
-    "datasinks": ["HoistPositionSub"],
+    "datasinks": ["HoistPositionSub", "HoistPositionSub2"],
     "trigger": "event"
   }
 

@@ -1,0 +1,12 @@
+# Local secrets — never commit
+.env
+
+# Java build output
+target/
+
+# IDE files
+.idea/
+*.iml
+.classpath
+.project
+.settings/

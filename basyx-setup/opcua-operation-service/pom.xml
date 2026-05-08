@@ -20,7 +20,7 @@
     </parent>
 
     <properties>
-        <java.version>25</java.version>
+        <java.version>17</java.version>
         <milo.version>0.6.8</milo.version>
         <aas4j.version>2.0.1</aas4j.version>
     </properties>

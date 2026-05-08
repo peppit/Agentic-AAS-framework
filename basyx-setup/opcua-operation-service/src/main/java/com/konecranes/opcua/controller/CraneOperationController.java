@@ -51,7 +51,7 @@ public class CraneOperationController {
 
 
     private static final long PULSE_DURATION_MS = 2500; // 3 seconds
-    private static final double DEFAULT_TOLERANCE_MM = 2.0;
+    private static final double DEFAULT_TOLERANCE_MM = 10.0;
     private static final long DEFAULT_TIMEOUT_MS = 120000;
     private static final long CONTROL_LOOP_SLEEP_MS = 100;
     private static final int WATCHDOG_MAX = 1000000;
@@ -437,13 +437,11 @@ public class CraneOperationController {
     private boolean controlBridgeAxis(double target, double current, double toleranceMm, boolean fast) throws Exception {
         double error = current - target;
         if (Math.abs(error) <= toleranceMm) {
-            opcUaService.writeDouble(BRIDGE_SPEED_NODE, 0.0);
             opcUaService.writeBoolean(BRIDGE_FORWARD_NODE, false);
             opcUaService.writeBoolean(BRIDGE_BACKWARD_NODE, false);
             return true;
         }
 
-        double speed = rampHorizontal(error, fast);
         if (error > 0) {
             opcUaService.writeBoolean(BRIDGE_FORWARD_NODE, false);
             opcUaService.writeBoolean(BRIDGE_BACKWARD_NODE, true);
@@ -451,20 +449,17 @@ public class CraneOperationController {
             opcUaService.writeBoolean(BRIDGE_BACKWARD_NODE, false);
             opcUaService.writeBoolean(BRIDGE_FORWARD_NODE, true);
         }
-        opcUaService.writeDouble(BRIDGE_SPEED_NODE, speed);
         return false;
     }
 
     private boolean controlTrolleyAxis(double target, double current, double toleranceMm, boolean fast) throws Exception {
         double error = current - target;
         if (Math.abs(error) <= toleranceMm) {
-            opcUaService.writeDouble(TROLLEY_SPEED_NODE, 0.0);
             opcUaService.writeBoolean(TROLLEY_FORWARD_NODE, false);
             opcUaService.writeBoolean(TROLLEY_BACKWARD_NODE, false);
             return true;
         }
 
-        double speed = rampHorizontal(error, fast);
         if (error > 0) {
             opcUaService.writeBoolean(TROLLEY_FORWARD_NODE, false);
             opcUaService.writeBoolean(TROLLEY_BACKWARD_NODE, true);
@@ -472,20 +467,17 @@ public class CraneOperationController {
             opcUaService.writeBoolean(TROLLEY_BACKWARD_NODE, false);
             opcUaService.writeBoolean(TROLLEY_FORWARD_NODE, true);
         }
-        opcUaService.writeDouble(TROLLEY_SPEED_NODE, speed);
         return false;
     }
 
     private boolean controlHoistAxis(double target, double current, double toleranceMm, boolean fast) throws Exception {
         double error = current - target;
         if (Math.abs(error) <= toleranceMm) {
-            opcUaService.writeDouble(HOIST_SPEED_NODE, 0.0);
             opcUaService.writeBoolean(HOIST_UP_NODE, false);
             opcUaService.writeBoolean(HOIST_DOWN_NODE, false);
             return true;
         }
 
-        double speed = fast ? rampLift(error) : rampLower(error);
         if (error > 0) {
             opcUaService.writeBoolean(HOIST_UP_NODE, false);
             opcUaService.writeBoolean(HOIST_DOWN_NODE, true);
@@ -493,7 +485,6 @@ public class CraneOperationController {
             opcUaService.writeBoolean(HOIST_DOWN_NODE, false);
             opcUaService.writeBoolean(HOIST_UP_NODE, true);
         }
-        opcUaService.writeDouble(HOIST_SPEED_NODE, speed);
         return false;
     }
 
@@ -555,10 +546,6 @@ public class CraneOperationController {
     }
 
     private void stopAllAxes() throws Exception {
-        opcUaService.writeDouble(BRIDGE_SPEED_NODE, 0.0);
-        opcUaService.writeDouble(TROLLEY_SPEED_NODE, 0.0);
-        opcUaService.writeDouble(HOIST_SPEED_NODE, 0.0);
-
         opcUaService.writeBoolean(BRIDGE_FORWARD_NODE, false);
         opcUaService.writeBoolean(BRIDGE_BACKWARD_NODE, false);
         opcUaService.writeBoolean(TROLLEY_FORWARD_NODE, false);

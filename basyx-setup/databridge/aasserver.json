@@ -19,21 +19,41 @@
   },
   {
     "uniqueId": "TrolleyPositionSub",
-    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTAxMF81MTUwXzExNTJfMTEwMg",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9hZG1pbi1zaGVsbC5pby9pZHRhL1N1Ym1vZGVsVGVtcGxhdGUvRGF0YU1vZGVsZm9yQXNzZXRMb2NhdGlvbi8xLzA",
     "idShortPath": "Trolley_Position_mm",
     "api": "DotAAS-V3"
   },
   {
     "uniqueId": "BridgePositionSub",
-    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTAxMF81MTUwXzExNTJfMTEwMg",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9hZG1pbi1zaGVsbC5pby9pZHRhL1N1Ym1vZGVsVGVtcGxhdGUvRGF0YU1vZGVsZm9yQXNzZXRMb2NhdGlvbi8xLzA",
     "idShortPath": "Bridge_Position_mm",
     "api": "DotAAS-V3"
   },
   {
     "uniqueId": "HoistPositionSub",
-    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTAxMF81MTUwXzExNTJfMTEwMg",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9hZG1pbi1zaGVsbC5pby9pZHRhL1N1Ym1vZGVsVGVtcGxhdGUvRGF0YU1vZGVsZm9yQXNzZXRMb2NhdGlvbi8xLzA",
     "idShortPath": "Hoist_Position_mm",
+    "api": "DotAAS-V3"
+  },
+
+  {
+    "uniqueId": "TrolleyPositionSub2",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9hZG1pbi1zaGVsbC5pby9pZHRhL1N1Ym1vZGVsVGVtcGxhdGUvRGF0YU1vZGVsZm9yQXNzZXRMb2NhdGlvbi8xLzA",
+    "idShortPath": "AssetTraces.LocationRecords%5B0%5D.Position.Y_Trolley_Position",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "BridgePositionSub2",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9hZG1pbi1zaGVsbC5pby9pZHRhL1N1Ym1vZGVsVGVtcGxhdGUvRGF0YU1vZGVsZm9yQXNzZXRMb2NhdGlvbi8xLzA",
+    "idShortPath": "AssetTraces.LocationRecords%5B0%5D.Position.X_Bridge_Position",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "HoistPositionSub2",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9hZG1pbi1zaGVsbC5pby9pZHRhL1N1Ym1vZGVsVGVtcGxhdGUvRGF0YU1vZGVsZm9yQXNzZXRMb2NhdGlvbi8xLzA",
+    "idShortPath": "AssetTraces.LocationRecords%5B0%5D.Position.Z_Hoist_Position",
     "api": "DotAAS-V3"
   }
 
 ]
+

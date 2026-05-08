@@ -28,7 +28,7 @@
 			"keyStoreType": null,
 			"keyStorePassword": null,
 			"keyStoreUrl": null,
-			"requestedPublishingInterval": 1000
+			"requestedPublishingInterval": 600
 		}
 	},
 	{
@@ -44,7 +44,7 @@
 			"keyStoreType": null,
 			"keyStorePassword": null,
 			"keyStoreUrl": null,
-			"requestedPublishingInterval": 1000
+			"requestedPublishingInterval": 600
 		}
 	},
 	{
@@ -60,7 +60,7 @@
 			"keyStoreType": null,
 			"keyStorePassword": null,
 			"keyStoreUrl": null,
-			"requestedPublishingInterval": 1000
+			"requestedPublishingInterval": 600
 		}
 	},
 	{
@@ -76,7 +76,7 @@
 			"keyStoreType": null,
 			"keyStorePassword": null,
 			"keyStoreUrl": null,
-			"requestedPublishingInterval": 1000
+			"requestedPublishingInterval": 600
 		}
 	},
 	{
@@ -92,7 +92,7 @@
 			"keyStoreType": null,
 			"keyStorePassword": null,
 			"keyStoreUrl": null,
-			"requestedPublishingInterval": 1000
+			"requestedPublishingInterval": 600
 		}
 	}
 ]

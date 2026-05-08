@@ -19,7 +19,7 @@ opcua:
   write:
     boolean-numeric-fallback-enabled: true
   # Keep secret out of source; provide via environment variable OPCUA_ACCESS_CODE
-  access-code: REMOVED
+  access-code:
   watchdog:
     increment-enabled: false
     require-active: false
