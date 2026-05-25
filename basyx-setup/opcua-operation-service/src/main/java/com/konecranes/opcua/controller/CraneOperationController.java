@@ -54,7 +54,6 @@ public class CraneOperationController {
     private static final double DEFAULT_TOLERANCE_MM = 10.0;
     private static final long DEFAULT_TIMEOUT_MS = 120000;
     private static final long CONTROL_LOOP_SLEEP_MS = 100;
-    private static final int WATCHDOG_MAX = 1000000;
 
     @Autowired
     private OpcUaService opcUaService;
@@ -345,10 +344,9 @@ public class CraneOperationController {
             double hoist = params.getOrDefault("Hoist", 0.0);
             double toleranceMm = params.getOrDefault("ToleranceMm", DEFAULT_TOLERANCE_MM);
             long timeoutMs = Math.max(1000L, params.getOrDefault("TimeoutMs", (double) DEFAULT_TIMEOUT_MS).longValue());
-            boolean fast = params.getOrDefault("Fast", 0.0) > 0.5;
 
-            logger.info("Target position: Bridge={}, Trolley={}, Hoist={}, tolerance={}mm, timeout={}ms, fast={}",
-                    bridge, trolley, hoist, toleranceMm, timeoutMs, fast);
+            logger.info("Target position: Bridge={}, Trolley={}, Hoist={}, tolerance={}mm, timeout={}ms",
+                    bridge, trolley, hoist, toleranceMm, timeoutMs);
 
             while (true) {
                 long elapsed = System.currentTimeMillis() - startTime;
@@ -368,9 +366,9 @@ public class CraneOperationController {
                 double currentTrolley = readPositionMm(TROLLEY_POSITION_MM_NODE);
                 double currentHoist = readPositionMm(HOIST_POSITION_MM_NODE);
 
-                boolean bridgeDone = controlBridgeAxis(bridge, currentBridge, toleranceMm, fast);
-                boolean trolleyDone = controlTrolleyAxis(trolley, currentTrolley, toleranceMm, fast);
-                boolean hoistDone = controlHoistAxis(hoist, currentHoist, toleranceMm, fast);
+                boolean bridgeDone = controlBridgeAxis(bridge, currentBridge, toleranceMm);
+                boolean trolleyDone = controlTrolleyAxis(trolley, currentTrolley, toleranceMm);
+                boolean hoistDone = controlHoistAxis(hoist, currentHoist, toleranceMm);
 
 
                 if (bridgeDone && trolleyDone && hoistDone) {
@@ -406,6 +404,83 @@ public class CraneOperationController {
         }
     }
 
+
+    @PostMapping(value = "/crane/drive-to-home", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<Map<String, Object>> driveToHome(@RequestBody String input) {
+        logger.info("Executing DriveToHome operation");
+        logger.debug("Input received: {}", input);
+        long startTime = System.currentTimeMillis();
+
+        try {
+            authorizeAccessIfConfigured();
+            // Parse input parameters from BaSyx JSON
+            Map<String, Double> params = parseOperationInput(input);
+            double bridge = params.getOrDefault("Bridge", 0.0);
+            double trolley = params.getOrDefault("Trolley", 0.0);
+            double hoist = params.getOrDefault("Hoist", 0.0);
+            double toleranceMm = params.getOrDefault("ToleranceMm", DEFAULT_TOLERANCE_MM);
+            long timeoutMs = Math.max(1000L, params.getOrDefault("TimeoutMs", (double) DEFAULT_TIMEOUT_MS).longValue());
+
+            logger.info("Target position: Bridge={}, Trolley={}, Hoist={}, tolerance={}mm, timeout={}ms",
+                    bridge, trolley, hoist, toleranceMm, timeoutMs);
+
+            while (true) {
+                long elapsed = System.currentTimeMillis() - startTime;
+                if (elapsed > timeoutMs) {
+                    stopAllAxes();
+                    Map<String, Object> timeoutResponse = new HashMap<>();
+                    timeoutResponse.put("status", "TIMEOUT");
+                    timeoutResponse.put("message", "DriveToHome timed out before reaching target");
+                    timeoutResponse.put("duration_ms", elapsed);
+                    timeoutResponse.put("finalBridge", readPositionMm(BRIDGE_POSITION_MM_NODE));
+                    timeoutResponse.put("finalTrolley", readPositionMm(TROLLEY_POSITION_MM_NODE));
+                    timeoutResponse.put("finalHoist", readPositionMm(HOIST_POSITION_MM_NODE));
+                    return ResponseEntity.status(HttpStatus.REQUEST_TIMEOUT).body(timeoutResponse);
+                }
+
+                double currentBridge = readPositionMm(BRIDGE_POSITION_MM_NODE);
+                double currentTrolley = readPositionMm(TROLLEY_POSITION_MM_NODE);
+                double currentHoist = readPositionMm(HOIST_POSITION_MM_NODE);
+
+                boolean bridgeDone = controlBridgeAxis(bridge, currentBridge, toleranceMm);
+                boolean trolleyDone = controlTrolleyAxis(trolley, currentTrolley, toleranceMm);
+                boolean hoistDone = controlHoistAxis(hoist, currentHoist, toleranceMm);
+
+
+                if (bridgeDone && trolleyDone && hoistDone) {
+                    stopAllAxes();
+
+                    Map<String, Object> response = new HashMap<>();
+                    response.put("status", "SUCCESS");
+                    response.put("message", String.format("Reached target (Bridge=%.2f, Trolley=%.2f, Hoist=%.2f)",
+                            bridge, trolley, hoist));
+                    response.put("duration_ms", elapsed);
+                    response.put("finalBridge", currentBridge);
+                    response.put("finalTrolley", currentTrolley);
+                    response.put("finalHoist", currentHoist);
+
+                    return ResponseEntity.ok(response);
+                }
+
+                Thread.sleep(CONTROL_LOOP_SLEEP_MS);
+            }
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            stopAllAxesQuietly();
+            logger.error("DriveToHome interrupted", e);
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("status", "ERROR");
+            errorResponse.put("error", "DriveToHome interrupted: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        } catch (Exception e) {
+            stopAllAxesQuietly();
+            logger.error("Error executing DriveToHome", e);
+            return buildErrorResponse("DriveToTarget", e);
+        }
+    }
+
+
     @PostMapping(value = {"/crane/stop-all", "/crane/stopAll"}, produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<Map<String, Object>> stopAll(@RequestBody(required = false) String input) {
         logger.info("Executing StopAll operation");
@@ -436,7 +511,7 @@ public class CraneOperationController {
         return ResponseEntity.status(status).body(errorResponse);
     }
 
-    private boolean controlBridgeAxis(double target, double current, double toleranceMm, boolean fast) throws Exception {
+    private boolean controlBridgeAxis(double target, double current, double toleranceMm) throws Exception {
         double error = current - target;
         if (Math.abs(error) <= toleranceMm) {
             opcUaService.writeBoolean(BRIDGE_FORWARD_NODE, false);
@@ -454,7 +529,7 @@ public class CraneOperationController {
         return false;
     }
 
-    private boolean controlTrolleyAxis(double target, double current, double toleranceMm, boolean fast) throws Exception {
+    private boolean controlTrolleyAxis(double target, double current, double toleranceMm) throws Exception {
         double error = current - target;
         if (Math.abs(error) <= toleranceMm) {
             opcUaService.writeBoolean(TROLLEY_FORWARD_NODE, false);
@@ -472,7 +547,7 @@ public class CraneOperationController {
         return false;
     }
 
-    private boolean controlHoistAxis(double target, double current, double toleranceMm, boolean fast) throws Exception {
+    private boolean controlHoistAxis(double target, double current, double toleranceMm) throws Exception {
         double error = current - target;
         if (Math.abs(error) <= toleranceMm) {
             opcUaService.writeBoolean(HOIST_UP_NODE, false);
@@ -508,20 +583,6 @@ public class CraneOperationController {
             stopAllAxes();
         } catch (Exception ex) {
             logger.warn("Failed to stop all axes during error handling", ex);
-        }
-    }
-
-    private void incrementWatchdogSafe() {
-        if (!watchdogIncrementEnabled) {
-            return;
-        }
-
-        try {
-            long current = opcUaService.readLong(WATCHDOG_NODE);
-            int next = (int) ((Math.max(0, current) % WATCHDOG_MAX) + 1);
-            opcUaService.writeInt16(WATCHDOG_NODE, next);
-        } catch (Exception ex) {
-            logger.warn("Failed to increment watchdog", ex);
         }
     }
 

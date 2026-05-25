@@ -213,5 +213,95 @@
     "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODM0Ml83MDExXzUwNjJfMjAzMw",
     "idShortPath": "ConditionMonitoring.StoppedTimeWithoutLoad_s",
     "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "HoistDiagnosticsOk",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODM0Ml83MDExXzUwNjJfMjAzMw",
+    "idShortPath": "Status.Hoist.Diagnostics.Ok",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "BridgeDiagnosticsOk",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODM0Ml83MDExXzUwNjJfMjAzMw",
+    "idShortPath": "Status.Bridge.Diagnostics.Ok",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "TrolleyDiagnosticsOk",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODM0Ml83MDExXzUwNjJfMjAzMw",
+    "idShortPath": "Status.Trolley.Diagnostics.Ok",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "HoistDiagnosticsEventActive",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODM0Ml83MDExXzUwNjJfMjAzMw",
+    "idShortPath": "Status.Hoist.Diagnostics.Event_Active",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "BridgeDiagnosticsEventActive",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODM0Ml83MDExXzUwNjJfMjAzMw",
+    "idShortPath": "Status.Bridge.Diagnostics.Event_Active",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "TrolleyDiagnosticsEventActive",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODM0Ml83MDExXzUwNjJfMjAzMw",
+    "idShortPath": "Status.Trolley.Diagnostics.Event_Active",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "HoistDiagnosticsAlarmActive",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODM0Ml83MDExXzUwNjJfMjAzMw",
+    "idShortPath": "Status.Hoist.Diagnostics.Alarm_Active",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "BridgeDiagnosticsAlarmActive",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODM0Ml83MDExXzUwNjJfMjAzMw",
+    "idShortPath": "Status.Bridge.Diagnostics.Alarm_Active",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "TrolleyDiagnosticsAlarmActive",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODM0Ml83MDExXzUwNjJfMjAzMw",
+    "idShortPath": "Status.Trolley.Diagnostics.Alarm_Active",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "HoistDiagnosticsFaultActive",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODM0Ml83MDExXzUwNjJfMjAzMw",
+    "idShortPath": "Status.Hoist.Diagnostics.Fault_Active",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "BridgeDiagnosticsFaultActive",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODM0Ml83MDExXzUwNjJfMjAzMw",
+    "idShortPath": "Status.Bridge.Diagnostics.Fault_Active",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "TrolleyDiagnosticsFaultActive",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODM0Ml83MDExXzUwNjJfMjAzMw",
+    "idShortPath": "Status.Trolley.Diagnostics.Fault_Active",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "HoistDiagnosticsBypassActive",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODM0Ml83MDExXzUwNjJfMjAzMw",
+    "idShortPath": "Status.Hoist.Diagnostics.Bypass_Active",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "BridgeDiagnosticsBypassActive",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODM0Ml83MDExXzUwNjJfMjAzMw",
+    "idShortPath": "Status.Bridge.Diagnostics.Bypass_Active",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "TrolleyDiagnosticsBypassActive",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODM0Ml83MDExXzUwNjJfMjAzMw",
+    "idShortPath": "Status.Trolley.Diagnostics.Bypass_Active",
+    "api": "DotAAS-V3"
   }
 ]

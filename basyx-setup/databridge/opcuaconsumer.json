@@ -513,5 +513,245 @@
 			"keyStoreUrl": null,
 			"requestedPublishingInterval": 1000
 		}
+	},
+	{
+		"uniqueId": "hoist_Diagnostics_Ok",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Status.Hoist.Diagnostics.OK",
+		"serverUrl": "10.210.1.12",
+		"serverPort": 4840,
+		"pathToService": "",
+		"parameters": {
+			"allowedSecurityPolicies": "None",
+			"keyAlias": null,
+			"keyPassword": null,
+			"keyStoreType": null,
+			"keyStorePassword": null,
+			"keyStoreUrl": null,
+			"requestedPublishingInterval": 1000
+		}
+	},
+	{
+		"uniqueId": "bridge_Diagnostics_Ok",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Status.Bridge.Diagnostics.OK",
+		"serverUrl": "10.210.1.12",
+		"serverPort": 4840,
+		"pathToService": "",
+		"parameters": {
+			"allowedSecurityPolicies": "None",
+			"keyAlias": null,
+			"keyPassword": null,
+			"keyStoreType": null,
+			"keyStorePassword": null,
+			"keyStoreUrl": null,
+			"requestedPublishingInterval": 1000
+		}
+	},
+	{
+		"uniqueId": "trolley_Diagnostics_Ok",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Status.Trolley.Diagnostics.OK",
+		"serverUrl": "10.210.1.12",
+		"serverPort": 4840,
+		"pathToService": "",
+		"parameters": {
+			"allowedSecurityPolicies": "None",
+			"keyAlias": null,
+			"keyPassword": null,
+			"keyStoreType": null,
+			"keyStorePassword": null,
+			"keyStoreUrl": null,
+			"requestedPublishingInterval": 1000
+		}
+	},
+	{
+		"uniqueId": "hoist_Diagnostics_Event_Active",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Status.Hoist.Diagnostics.Event_Active",
+		"serverUrl": "10.210.1.12",
+		"serverPort": 4840,
+		"pathToService": "",
+		"parameters": {
+			"allowedSecurityPolicies": "None",
+			"keyAlias": null,
+			"keyPassword": null,
+			"keyStoreType": null,
+			"keyStorePassword": null,
+			"keyStoreUrl": null,
+			"requestedPublishingInterval": 1000
+		}
+	},
+	{
+		"uniqueId": "bridge_Diagnostics_Event_Active",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Status.Bridge.Diagnostics.Event_Active",
+		"serverUrl": "10.210.1.12",
+		"serverPort": 4840,
+		"pathToService": "",
+		"parameters": {
+			"allowedSecurityPolicies": "None",
+			"keyAlias": null,
+			"keyPassword": null,
+			"keyStoreType": null,
+			"keyStorePassword": null,
+			"keyStoreUrl": null,
+			"requestedPublishingInterval": 1000
+		}
+	},
+	{
+		"uniqueId": "trolley_Diagnostics_Event_Active",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Status.Trolley.Diagnostics.Event_Active",
+		"serverUrl": "10.210.1.12",
+		"serverPort": 4840,
+		"pathToService": "",
+		"parameters": {
+			"allowedSecurityPolicies": "None",
+			"keyAlias": null,
+			"keyPassword": null,
+			"keyStoreType": null,
+			"keyStorePassword": null,
+			"keyStoreUrl": null,
+			"requestedPublishingInterval": 1000
+		}
+	},
+	{
+		"uniqueId": "hoist_Diagnostics_Alarm_Active",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Status.Hoist.Diagnostics.Alarm_Active",
+		"serverUrl": "10.210.1.12",
+		"serverPort": 4840,
+		"pathToService": "",
+		"parameters": {
+			"allowedSecurityPolicies": "None",
+			"keyAlias": null,
+			"keyPassword": null,
+			"keyStoreType": null,
+			"keyStorePassword": null,
+			"keyStoreUrl": null,
+			"requestedPublishingInterval": 1000
+		}
+	},
+	{
+		"uniqueId": "bridge_Diagnostics_Alarm_Active",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Status.Bridge.Diagnostics.Alarm_Active",
+		"serverUrl": "10.210.1.12",
+		"serverPort": 4840,
+		"pathToService": "",
+		"parameters": {
+			"allowedSecurityPolicies": "None",
+			"keyAlias": null,
+			"keyPassword": null,
+			"keyStoreType": null,
+			"keyStorePassword": null,
+			"keyStoreUrl": null,
+			"requestedPublishingInterval": 1000
+		}
+	},
+	{
+		"uniqueId": "trolley_Diagnostics_Alarm_Active",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Status.Trolley.Diagnostics.Alarm_Active",
+		"serverUrl": "10.210.1.12",
+		"serverPort": 4840,
+		"pathToService": "",
+		"parameters": {
+			"allowedSecurityPolicies": "None",
+			"keyAlias": null,
+			"keyPassword": null,
+			"keyStoreType": null,
+			"keyStorePassword": null,
+			"keyStoreUrl": null,
+			"requestedPublishingInterval": 1000
+		}
+	},
+		{
+		"uniqueId": "hoist_Diagnostics_Fault_Active",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Status.Hoist.Diagnostics.Fault_Active",
+		"serverUrl": "10.210.1.12",
+		"serverPort": 4840,
+		"pathToService": "",
+		"parameters": {
+			"allowedSecurityPolicies": "None",
+			"keyAlias": null,
+			"keyPassword": null,
+			"keyStoreType": null,
+			"keyStorePassword": null,
+			"keyStoreUrl": null,
+			"requestedPublishingInterval": 1000
+		}
+	},
+	{
+		"uniqueId": "bridge_Diagnostics_Fault_Active",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Status.Bridge.Diagnostics.Fault_Active",
+		"serverUrl": "10.210.1.12",
+		"serverPort": 4840,
+		"pathToService": "",
+		"parameters": {
+			"allowedSecurityPolicies": "None",
+			"keyAlias": null,
+			"keyPassword": null,
+			"keyStoreType": null,
+			"keyStorePassword": null,
+			"keyStoreUrl": null,
+			"requestedPublishingInterval": 1000
+		}
+	},
+	{
+		"uniqueId": "trolley_Diagnostics_Fault_Active",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Status.Trolley.Diagnostics.Fault_Active",
+		"serverUrl": "10.210.1.12",
+		"serverPort": 4840,
+		"pathToService": "",
+		"parameters": {
+			"allowedSecurityPolicies": "None",
+			"keyAlias": null,
+			"keyPassword": null,
+			"keyStoreType": null,
+			"keyStorePassword": null,
+			"keyStoreUrl": null,
+			"requestedPublishingInterval": 1000
+		}
+	},
+	{
+		"uniqueId": "hoist_Diagnostics_Bypass_Active",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Status.Hoist.Diagnostics.Bypass_Active",
+		"serverUrl": "10.210.1.12",
+		"serverPort": 4840,
+		"pathToService": "",
+		"parameters": {
+			"allowedSecurityPolicies": "None",
+			"keyAlias": null,
+			"keyPassword": null,
+			"keyStoreType": null,
+			"keyStorePassword": null,
+			"keyStoreUrl": null,
+			"requestedPublishingInterval": 1000
+		}
+	},
+	{
+		"uniqueId": "bridge_Diagnostics_Bypass_Active",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Status.Bridge.Diagnostics.Bypass_Active",
+		"serverUrl": "10.210.1.12",
+		"serverPort": 4840,
+		"pathToService": "",
+		"parameters": {
+			"allowedSecurityPolicies": "None",
+			"keyAlias": null,
+			"keyPassword": null,
+			"keyStoreType": null,
+			"keyStorePassword": null,
+			"keyStoreUrl": null,
+			"requestedPublishingInterval": 1000
+		}
+	},
+	{
+		"uniqueId": "trolley_Diagnostics_Bypass_Active",
+		"nodeInformation": "ns=5;s=DX_Custom_V.Status.Trolley.Diagnostics.Bypass_Active",
+		"serverUrl": "10.210.1.12",
+		"serverPort": 4840,
+		"pathToService": "",
+		"parameters": {
+			"allowedSecurityPolicies": "None",
+			"keyAlias": null,
+			"keyPassword": null,
+			"keyStoreType": null,
+			"keyStorePassword": null,
+			"keyStoreUrl": null,
+			"requestedPublishingInterval": 1000
+		}
 	}
 ]

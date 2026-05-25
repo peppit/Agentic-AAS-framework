@@ -224,5 +224,110 @@
     "transformers": ["dataValueToJson", "jsonataExtractValue"],
     "datasinks": ["StoppedTimeWithLoad_s"],
     "trigger": "event"
+  },
+  {
+    "routeId": "opcua-to-aas-hoist-diagnostics-ok",
+    "datasource": "hoist_Diagnostics_Ok",
+    "transformers": ["dataValueToJson", "jsonataExtractValue"],
+    "datasinks": ["HoistDiagnosticsOk"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "opcua-to-aas-bridge-diagnostics-ok",
+    "datasource": "bridge_Diagnostics_Ok",
+    "transformers": ["dataValueToJson", "jsonataExtractValue"],
+    "datasinks": ["BridgeDiagnosticsOk"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "opcua-to-aas-trolley-diagnostics-ok",
+    "datasource": "trolley_Diagnostics_Ok",
+    "transformers": ["dataValueToJson", "jsonataExtractValue"],
+    "datasinks": ["TrolleyDiagnosticsOk"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "opcua-to-aas-hoist-diagnostics-eventActive",
+    "datasource": "hoist_Diagnostics_Event_Active",
+    "transformers": ["dataValueToJson", "jsonataExtractValue"],
+    "datasinks": ["HoistDiagnosticsEventActive"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "opcua-to-aas-bridge-diagnostics-eventActive",
+    "datasource": "bridge_Diagnostics_Event_Active",
+    "transformers": ["dataValueToJson", "jsonataExtractValue"],
+    "datasinks": ["BridgeDiagnosticsEventActive"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "opcua-to-aas-trolley-diagnostics-eventActive",
+    "datasource": "trolley_Diagnostics_Event_Active",
+    "transformers": ["dataValueToJson", "jsonataExtractValue"],
+    "datasinks": ["TrolleyDiagnosticsEventActive"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "opcua-to-aas-hoist-diagnostics-alarmActive",
+    "datasource": "hoist_Diagnostics_Alarm_Active",
+    "transformers": ["dataValueToJson", "jsonataExtractValue"],
+    "datasinks": ["HoistDiagnosticsAlarmActive"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "opcua-to-aas-bridge-diagnostics-alarmActive",
+    "datasource": "bridge_Diagnostics_Alarm_Active",
+    "transformers": ["dataValueToJson", "jsonataExtractValue"],
+    "datasinks": ["BridgeDiagnosticsAlarmActive"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "opcua-to-aas-trolley-diagnostics-alarmActive",
+    "datasource": "trolley_Diagnostics_Alarm_Active",
+    "transformers": ["dataValueToJson", "jsonataExtractValue"],
+    "datasinks": ["TrolleyDiagnosticsAlarmActive"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "opcua-to-aas-hoist-diagnostics-faultActive",
+    "datasource": "hoist_Diagnostics_Fault_Active",
+    "transformers": ["dataValueToJson", "jsonataExtractValue"],
+    "datasinks": ["HoistDiagnosticsFaultActive"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "opcua-to-aas-bridge-diagnostics-faultActive",
+    "datasource": "bridge_Diagnostics_Fault_Active",
+    "transformers": ["dataValueToJson", "jsonataExtractValue"],
+    "datasinks": ["BridgeDiagnosticsFaultActive"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "opcua-to-aas-trolley-diagnostics-faultActive",
+    "datasource": "trolley_Diagnostics_Fault_Active",
+    "transformers": ["dataValueToJson", "jsonataExtractValue"],
+    "datasinks": ["TrolleyDiagnosticsFaultActive"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "opcua-to-aas-hoist-diagnostics-bypassActive",
+    "datasource": "hoist_Diagnostics_Bypass_Active",
+    "transformers": ["dataValueToJson", "jsonataExtractValue"],
+    "datasinks": ["HoistDiagnosticsBypassActive"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "opcua-to-aas-bridge-diagnostics-bypassActive",
+    "datasource": "bridge_Diagnostics_Bypass_Active",
+    "transformers": ["dataValueToJson", "jsonataExtractValue"],
+    "datasinks": ["BridgeDiagnosticsBypassActive"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "opcua-to-aas-trolley-diagnostics-bypassActive",
+    "datasource": "trolley_Diagnostics_Bypass_Active",
+    "transformers": ["dataValueToJson", "jsonataExtractValue"],
+    "datasinks": ["TrolleyDiagnosticsBypassActive"],
+    "trigger": "event"
   }
 ]
