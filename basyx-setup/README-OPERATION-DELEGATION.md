@@ -168,6 +168,91 @@ DriveToTarget:
 
 **Verdict**: Operation Delegation is the **production-ready** approach. It uses standard AAS concepts and is fully supported by BaSyx.
 
+## 🌐 Controlling Operations via HTTP (without the Web UI)
+
+The AAS Web UI does not currently support editing operation input variables. You can work around this in two ways via the REST API.
+
+### Option A — Invoke the operation with custom input values (moves the crane)
+
+This runs the operation and forwards the inputs to the OPC UA service. Requires the OPC UA server to be reachable.
+
+```powershell
+$submodelId = "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODM0Ml83MDExXzUwNjJfMjAzMw"
+$url = "http://localhost:8081/submodels/$submodelId/submodel-elements/Controls.TargetPositioning.DriveToTarget/invoke"
+
+$body = @{
+    inputArguments = @(
+        @{ value = @{ modelType = "Property"; idShort = "Hoist";   valueType = "xs:double"; value = "2000" } },
+        @{ value = @{ modelType = "Property"; idShort = "Trolley"; valueType = "xs:double"; value = "5000" } },
+        @{ value = @{ modelType = "Property"; idShort = "Bridge";  valueType = "xs:double"; value = "10000" } }
+    )
+    inoutputArguments = @()
+    requestedTimeout  = 10000
+} | ConvertTo-Json -Depth 10
+
+try {
+    $response = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $body
+    $response | ConvertTo-Json -Depth 10
+} catch {
+    $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+    $reader.ReadToEnd()
+}
+```
+
+If you receive HTTP **424**, BaSyx reached the operation service but it returned an error. Check `docker logs opcua-operation-service --tail 50`. The most common cause is the OPC UA server at `opc.tcp://10.210.1.12:4840` being unreachable (`Bad_ConnectionClosed`).
+
+### Option B — Update the stored default values in the AAS (no crane movement, no OPC UA needed)
+
+Operation input variables are nested inside the operation element itself and cannot be addressed as standalone paths. You must `PUT` the **entire operation** with the updated values.
+
+```powershell
+$submodelId = "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODM0Ml83MDExXzUwNjJfMjAzMw"
+$baseUrl = "http://localhost:8081/submodels/$submodelId/submodel-elements"
+
+$operation = @{
+    modelType = "Operation"
+    idShort   = "DriveToTarget"
+    qualifiers = @(
+        @{
+            kind      = "ConceptQualifier"
+            type      = "invocationDelegation"
+            value     = "http://opcua-operation-service:8087/crane/drive-to-target"
+            valueType = "xs:string"
+        }
+    )
+    inputVariables = @(
+        @{ value = @{ modelType = "Property"; idShort = "Hoist";   valueType = "xs:double"; value = "2000" } },
+        @{ value = @{ modelType = "Property"; idShort = "Trolley"; valueType = "xs:double"; value = "5000" } },
+        @{ value = @{ modelType = "Property"; idShort = "Bridge";  valueType = "xs:double"; value = "10000" } }
+    )
+    outputVariables = @(
+        @{ value = @{ modelType = "Property"; idShort = "status"; valueType = "xs:boolean"; value = "false" } }
+    )
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod -Method Put `
+  -Uri "$baseUrl/Controls.TargetPositioning.DriveToTarget" `
+  -ContentType "application/json" `
+  -Body $operation
+```
+
+> **Important:** The `qualifiers` (delegation URL) and `outputVariables` must be included in the PUT body to preserve them — omitting them will remove those fields from the stored element.
+
+To verify the values were updated:
+
+```powershell
+Invoke-RestMethod "$baseUrl/Controls.TargetPositioning.DriveToTarget" |
+  Select-Object -ExpandProperty inputVariables |
+  ForEach-Object { $_.value | Select-Object idShort, value }
+```
+
+### Summary
+
+| Goal | Method | OPC UA required? |
+|---|---|---|
+| Move the crane to new coordinates | `POST .../invoke` with `inputArguments` | ✅ Yes |
+| Update stored default values in AAS | `PUT .../DriveToTarget` with full operation body | ❌ No |
+
 ## 📖 Documentation
 
 - **[opcua-operation-service/README.md](opcua-operation-service/README.md)** - Service implementation details

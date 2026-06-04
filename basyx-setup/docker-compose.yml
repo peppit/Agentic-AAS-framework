@@ -94,24 +94,7 @@ services:
     restart: always
     extra_hosts:
       - "host.docker.internal:host-gateway"
-  
-#ALTERNATIVE OPTION: If you want to run the opcua-aas-bridge as a separate service, you can uncomment the following section and make sure to adjust the environment variables accordingly. 
-# This will allow the bridge to connect to the OPC UA server running on the host machine and the AAS environment running in the container.
- # opcua-aas-bridge:
- #   build:
- #     context: ./opcua-aas-bridge
- #     dockerfile: Dockerfile
- #   container_name: opcua-aas-bridge
- #   environment:
- #     - OPCUA_ENDPOINT=opc.tcp://host.docker.internal:4840
- #     - AAS_ENDPOINT=http://aas-env:8081
- #   restart: always
- #   extra_hosts:
- #     - "host.docker.internal:host-gateway"
- #   depends_on:
- #     aas-env:
- #       condition: service_healthy
-  
+
   aas-discovery:
     image: eclipsebasyx/aas-discovery:2.0.0-SNAPSHOT
     container_name: aas-discovery
