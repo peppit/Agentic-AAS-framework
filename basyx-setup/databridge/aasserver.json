@@ -4,5 +4,11 @@
     "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTI5M18yMTQyXzYwNjJfOTE0OA",
     "idShortPath": "IsRunning",
     "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "ConveyorBelt_CurrentSpeed",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTI5M18yMTQyXzYwNjJfOTE0OA",
+    "idShortPath": "CurrentSpeed",
+    "api": "DotAAS-V3"
   }
 ]

@@ -1,0 +1,1 @@
+$type($) = "object" ? ($exists(isRunning) ? isRunning : ($exists(running) ? running : value.value)) : $

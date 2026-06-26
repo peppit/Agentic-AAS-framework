@@ -1,7 +1,13 @@
 [
 	{
-		"uniqueId": "jsonataExtractValue",
-		"queryPath": "jsonExtractValue.json",
+		"uniqueId": "jsonataExtractRunning",
+		"queryPath": "jsonExtractRunning.json",
+		"inputType": "JsonString",
+		"outputType": "JsonString"
+	},
+	{
+		"uniqueId": "jsonataExtractCurrentSpeed",
+		"queryPath": "jsonExtractCurrentSpeed.json",
 		"inputType": "JsonString",
 		"outputType": "JsonString"
 	}

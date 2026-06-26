@@ -1,0 +1,15 @@
+[
+  {
+    "uniqueId": "conveyorbelt-running-source",
+    "serverUrl": "mosquitto",
+    "serverPort": 1883,
+    "topic": "simulation/Station_01/isRunning"
+  },
+  {
+    "uniqueId": "conveyorbelt-speed-source",
+    "serverUrl": "mosquitto",
+    "serverPort": 1883,
+    "topic": "simulation/Station_01/currentSpeed"
+  }
+]
+

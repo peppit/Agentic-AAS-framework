@@ -1,0 +1,1 @@
+$type($) = "object" ? ($exists(currentSpeed) ? currentSpeed : ($exists(speed) ? speed : value.value)) : $

@@ -1,7 +1,7 @@
 [
 	{
 		"uniqueId": "dataValueToJson",
-		"operation": "marshal",
+		"operation": "unmarshal",
 		"jacksonModules": "com.fasterxml.jackson.datatype.jsr310.JavaTimeModule"
 	}
 ]
