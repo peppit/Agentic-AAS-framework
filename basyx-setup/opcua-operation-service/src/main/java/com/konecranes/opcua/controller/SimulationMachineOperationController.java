@@ -67,7 +67,7 @@ public class SimulationMachineOperationController {
         }
     }
 
-    @PostMapping(value = "/simulation/conveyorbelt/running", produces = MediaType.APPLICATION_JSON_VALUE)
+    @PostMapping(value = "/simulation/conveyorbelt/run", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<Map<String, Object>> setConveyorRunning(@RequestBody String input) {
         logger.info("Executing conveyor running operation");
         logger.debug("Input received: {}", input);
