@@ -5,31 +5,10 @@ spring:
   application:
     name: opcua-operation-service
 
-opcua:
-  # Use host.docker.internal to reach OPC UA server on host machine from Docker
-  endpoint: opc.tcp://10.210.1.12:4840
-  auth-mode: anonymous
-  username:
-  password:
-  security-mode: None
-  security-policy: None
-  pulse:
-    edge-trigger-enabled: false
-    leading-false-delay-ms: 100
-  write:
-    boolean-numeric-fallback-enabled: true
-  # Keep secret out of source; provide via environment variable OPCUA_ACCESS_CODE
-  access-code: ${OPCUA_ACCESS_CODE:}
-  watchdog:
-    increment-enabled: false
-    require-active: false
-    max-stale-ms: 5000
-
 logging:
   level:
     root: INFO
-    com.konecranes: DEBUG
-    org.eclipse.milo: INFO
+    com.openindustryproject: DEBUG
 
 simulation:
   mqtt:

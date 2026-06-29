@@ -1,4 +1,4 @@
-package com.konecranes.opcua;
+package com.openindustryproject.opcua;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

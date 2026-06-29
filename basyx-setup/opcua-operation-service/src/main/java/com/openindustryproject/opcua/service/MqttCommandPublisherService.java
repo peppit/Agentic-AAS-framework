@@ -1,4 +1,4 @@
-package com.konecranes.opcua.service;
+package com.openindustryproject.opcua.service;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;

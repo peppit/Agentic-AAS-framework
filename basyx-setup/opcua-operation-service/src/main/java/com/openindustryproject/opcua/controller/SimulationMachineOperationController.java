@@ -1,10 +1,10 @@
-package com.konecranes.opcua.controller;
+package com.openindustryproject.opcua.controller;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.konecranes.opcua.service.MqttCommandPublisherService;
+import com.openindustryproject.opcua.service.MqttCommandPublisherService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
