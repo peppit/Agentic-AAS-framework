@@ -37,7 +37,7 @@ simulation:
     broker-url: tcp://mosquitto:1883
     client-id: simulation-operation-service
     qos: 1
-    topic-template: simulation/{stationId}/command/{operation}
+    topic-template: simulation/{stationId}/operations/{operation}
     conveyor:
-      running-topic: simulation/Station_01/command/isRunning
-      speed-topic: simulation/Station_01/command/targetSpeed
+      running-topic: simulation/Station_01/operations/conveyorRunning
+      speed-topic: simulation/Station_01/operations/conveyorSpeed
