@@ -2,15 +2,22 @@
   {
     "routeId": "conveyor-belt-running",
     "datasource": "conveyorbelt-running-source",
-    "transformers": ["jsonataExtractRunning"],
+    "transformers": ["jsonataExtractValue"],
     "datasinks": ["ConveyorBelt_Running"],
     "trigger": "event"
   },
   {
     "routeId": "conveyor-belt-current-speed",
     "datasource": "conveyorbelt-speed-source",
-    "transformers": ["jsonataExtractCurrentSpeed"],
+    "transformers": ["jsonataExtractValue"],
     "datasinks": ["ConveyorBelt_CurrentSpeed"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "conveyor-belt-sensor",
+    "datasource": "conveyorbelt-sensor-source",
+    "transformers": ["jsonataExtractValue"],
+    "datasinks": ["ConveyorBelt_Sensor"],
     "trigger": "event"
   }
 ]

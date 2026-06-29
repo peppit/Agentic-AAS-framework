@@ -10,6 +10,12 @@
     "serverUrl": "mosquitto",
     "serverPort": 1883,
     "topic": "simulation/Station_01/currentSpeed"
+  },
+  {
+    "uniqueId": "conveyorbelt-sensor-source",
+    "serverUrl": "mosquitto",
+    "serverPort": 1883,
+    "topic": "simulation/Station_01/boxDetected"
   }
 ]
 

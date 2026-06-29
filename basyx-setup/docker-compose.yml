@@ -95,6 +95,26 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  mqtt-operation-bridge:
+    build:
+      context: ./mqtt-operation-bridge
+      dockerfile: Dockerfile
+    container_name: mqtt-operation-bridge
+    environment:
+      - BRIDGE_MQTT_BROKER_URL=tcp://mosquitto:1883
+      - BRIDGE_MQTT_TOPIC_FILTER=oip/command/conveyorbelt/+
+      - BRIDGE_MQTT_REPLY_TOPIC_PREFIX=oip/reply/conveyorbelt
+      - BRIDGE_INVOKE_CONVEYOR_RUNNING_URL=http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vMzEyMV8xMTQyXzYwNjJfMzY3NQ/submodel-elements/Running/invoke
+      - BRIDGE_INVOKE_CONVEYOR_SPEED_URL=http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vMzEyMV8xMTQyXzYwNjJfMzY3NQ/submodel-elements/Speed/invoke
+    ports:
+      - '8091:8091'
+    restart: always
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      aas-env:
+        condition: service_healthy
+
   aas-discovery:
     image: eclipsebasyx/aas-discovery:2.0.0-SNAPSHOT
     container_name: aas-discovery

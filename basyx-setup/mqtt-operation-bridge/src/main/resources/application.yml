@@ -1,0 +1,22 @@
+server:
+  port: 8091
+
+bridge:
+  mqtt:
+    broker-url: tcp://mosquitto:1883
+    client-id: mqtt-operation-bridge
+    topic-filter: oip/simulation/conveyorbelt/+
+    qos: 1
+    reply-topic-prefix: oip/reply/conveyorbelt
+  invoke:
+    timeout-ms: 8000
+    conveyor:
+      running-url: http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vMzEyMV8xMTQyXzYwNjJfMzY3NQ/submodel-elements/Running/invoke
+      running-idshort: running
+      speed-url: http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vMzEyMV8xMTQyXzYwNjJfMzY3NQ/submodel-elements/Speed/invoke
+      speed-idshort: speed
+
+logging:
+  level:
+    root: INFO
+    com.openindustryproject: INFO

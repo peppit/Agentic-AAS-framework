@@ -1,0 +1,12 @@
+$type($) = "object" ? (
+	$exists(isRunning) ? ($type(isRunning) = "string" ? ($lowercase(isRunning) = "true") : $boolean(isRunning)) :
+	($exists(boxDetected) ? ($type(boxDetected) = "string" ? ($lowercase(boxDetected) = "true") : $boolean(boxDetected)) :
+	($exists(currentSpeed) ? $number(currentSpeed) :
+	($exists(value) ? (
+		$type(value) = "string" ? (
+			$lowercase(value) = "true" ? true :
+			($lowercase(value) = "false" ? false : $number(value))
+		) : value
+	) : $)
+	))
+) : $s
