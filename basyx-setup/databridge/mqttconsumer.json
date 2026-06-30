@@ -16,6 +16,12 @@
     "serverUrl": "mosquitto",
     "serverPort": 1883,
     "topic": "simulation/Station_01/boxDetected"
+  },
+  {
+    "uniqueId": "robot-isMoving-source",
+    "serverUrl": "mosquitto",
+    "serverPort": 1883,
+    "topic": "simulation/Station_01/isMoving"
   }
 ]
 

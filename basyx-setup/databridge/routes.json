@@ -19,5 +19,12 @@
     "transformers": ["jsonataExtractValue"],
     "datasinks": ["ConveyorBelt_Sensor"],
     "trigger": "event"
+  },
+  {
+    "routeId": "robot-isMoving",
+    "datasource": "robot-isMoving-source",
+    "transformers": ["jsonataExtractValue"],
+    "datasinks": ["Robot_IsMoving"],
+    "trigger": "event"
   }
 ]

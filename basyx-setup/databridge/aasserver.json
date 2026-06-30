@@ -16,5 +16,11 @@
     "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTI5M18yMTQyXzYwNjJfOTE0OA",
     "idShortPath": "Sensor_BoxPresent",
     "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "Robot_IsMoving",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTExNV85MDgxXzYwNjJfMTg2NQ",
+    "idShortPath": "IsMoving",
+    "api": "DotAAS-V3"
   }
 ]
