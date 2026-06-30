@@ -117,7 +117,7 @@ public class SimulationMachineOperationController {
         }
     }
 
-    @PostMapping(value = {"/simulation/robot/movebox", "/simulation/robot/move-to-position"}, produces = MediaType.APPLICATION_JSON_VALUE)
+    @PostMapping(value = {"/simulation/robot/movebox"}, produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<Map<String, Object>> moveBox(@RequestBody String input) {
         logger.info("Executing robot MoveBox operation");
         logger.debug("Input received: {}", input);
@@ -126,8 +126,16 @@ public class SimulationMachineOperationController {
             JsonObject root = parseInputRoot(input);
             String requestId = extractRequestId(root, input);
             String stationId = extractStringParameterAny(root, "Station_01", "stationId", "StationId");
-            String conveyor = extractStringParameterAny(root, null, "Conveyor1", "conveyor1", "Conveyor", "conveyor");
-            String pallet = extractStringParameterAny(root, null, "Pallet1", "pallet1", "Pallet", "pallet");
+            JsonObject extractedParams = extractParams(root);
+            String conveyor = extractStringParameterAny(root, null, "Conveyor1", "conveyor1", "Conveyor", "conveyor", "SourcePosition", "sourcePosition") ;
+            if (conveyor == null || conveyor.isBlank()) {
+                conveyor = extractStringFromParams(extractedParams, "Conveyor1", "conveyor1", "Conveyor", "conveyor", "SourcePosition", "sourcePosition", "SourcePosition.");
+            }
+
+            String pallet = extractStringParameterAny(root, null, "Pallet1", "pallet1", "Pallet", "pallet", "TargetPosition", "targetPosition") ;
+            if (pallet == null || pallet.isBlank()) {
+                pallet = extractStringFromParams(extractedParams, "Pallet1", "pallet1", "Pallet", "pallet", "TargetPosition", "targetPosition", "TargetPosition.");
+            }
 
             if (conveyor == null || conveyor.isBlank()) {
                 throw new IllegalArgumentException("Missing required parameter: Conveyor1");
@@ -222,6 +230,67 @@ public class SimulationMachineOperationController {
             }
         }
         return defaultValue;
+    }
+
+    private String extractStringFromParams(JsonObject params, String... keys) {
+        if (params == null) {
+            return null;
+        }
+
+        for (String key : keys) {
+            if (!params.has(key)) {
+                continue;
+            }
+
+            JsonElement value = params.get(key);
+            if (value == null || value.isJsonNull() || !value.isJsonPrimitive()) {
+                continue;
+            }
+
+            String text = value.getAsString();
+            if (text != null && !text.isBlank()) {
+                return text;
+            }
+        }
+
+        // Fallback for accidental punctuation differences like TargetPosition.
+        JsonObject normalizedAliasMap = new JsonObject();
+        for (String key : keys) {
+            normalizedAliasMap.addProperty(normalizeIdShort(key), "1");
+        }
+
+        for (Map.Entry<String, JsonElement> entry : params.entrySet()) {
+            String normalized = normalizeIdShort(entry.getKey());
+            if (!normalizedAliasMap.has(normalized)) {
+                continue;
+            }
+
+            JsonElement value = entry.getValue();
+            if (value == null || value.isJsonNull() || !value.isJsonPrimitive()) {
+                continue;
+            }
+
+            String text = value.getAsString();
+            if (text != null && !text.isBlank()) {
+                return text;
+            }
+        }
+
+        return null;
+    }
+
+    private String normalizeIdShort(String raw) {
+        if (raw == null) {
+            return "";
+        }
+
+        StringBuilder normalized = new StringBuilder();
+        for (char c : raw.toCharArray()) {
+            if (Character.isLetterOrDigit(c)) {
+                normalized.append(Character.toLowerCase(c));
+            }
+        }
+        return normalized.toString();
     }
 
     private JsonObject extractParams(JsonObject root) {
