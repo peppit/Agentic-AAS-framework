@@ -105,6 +105,25 @@ curl -X POST http://localhost:8087/crane/drive-to-target \
   ]'
 ```
 
+### Invoke Robot MoveBox with AAS-style input variables
+```bash
+curl -X POST http://localhost:8087/simulation/robot/movebox \
+  -H "Content-Type: application/json" \
+  -d '{
+    "inputVariables": [
+      {"value": {"idShort": "Conveyor1", "value": "Conveyor1"}},
+      {"value": {"idShort": "Pallet1", "value": "Pallet1"}},
+      {"value": {"idShort": "stationId", "value": "Station_01"}}
+    ]
+  }'
+```
+
+This publishes a generic MQTT station command to topic:
+
+simulation/{stationId}/operations/moveBox
+
+with params Conveyor1 and Pallet1 in the JSON payload.
+
 ### Expected Response
 ```json
 {

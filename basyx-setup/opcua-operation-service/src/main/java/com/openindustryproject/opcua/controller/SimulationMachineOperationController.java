@@ -117,6 +117,48 @@ public class SimulationMachineOperationController {
         }
     }
 
+    @PostMapping(value = "/simulation/robot/movebox", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<Map<String, Object>> moveBox(@RequestBody String input) {
+        logger.info("Executing robot MoveBox operation");
+        logger.debug("Input received: {}", input);
+
+        try {
+            JsonObject root = parseInputRoot(input);
+            String requestId = extractRequestId(root, input);
+            String stationId = extractStringParameterAny(root, "Station_01", "stationId", "StationId");
+            String conveyor = extractStringParameterAny(root, null, "Conveyor1", "conveyor1", "Conveyor", "conveyor");
+            String pallet = extractStringParameterAny(root, null, "Pallet1", "pallet1", "Pallet", "pallet");
+
+            if (conveyor == null || conveyor.isBlank()) {
+                throw new IllegalArgumentException("Missing required parameter: Conveyor1");
+            }
+            if (pallet == null || pallet.isBlank()) {
+                throw new IllegalArgumentException("Missing required parameter: Pallet1");
+            }
+
+            JsonObject params = new JsonObject();
+            params.addProperty("Conveyor1", conveyor);
+            params.addProperty("Pallet1", pallet);
+
+            String operation = "moveBox";
+            String payload = buildGenericCommandPayload(requestId, stationId, operation, params);
+            mqttPublisher.publishStationOperation(stationId, operation, payload);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("status", "SUCCESS");
+            response.put("message", "Robot MoveBox command published");
+            response.put("requestId", requestId);
+            response.put("stationId", stationId);
+            response.put("operation", operation);
+            response.put("Conveyor1", conveyor);
+            response.put("Pallet1", pallet);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            logger.error("Error executing robot MoveBox operation", e);
+            return buildErrorResponse("MoveBox", e);
+        }
+    }
+
     private ResponseEntity<Map<String, Object>> buildErrorResponse(String operationName, Exception e) {
         Map<String, Object> errorResponse = new HashMap<>();
         errorResponse.put("status", "ERROR");
@@ -169,6 +211,16 @@ public class SimulationMachineOperationController {
             return element.getAsString();
         }
 
+        return defaultValue;
+    }
+
+    private String extractStringParameterAny(JsonObject root, String defaultValue, String... keys) {
+        for (String key : keys) {
+            String value = extractStringParameter(root, key, null);
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
         return defaultValue;
     }
 

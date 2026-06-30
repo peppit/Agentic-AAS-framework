@@ -36,7 +36,8 @@ Use these HTTP endpoints as operation delegation targets:
 
 1. Conveyor running: /simulation/conveyorbelt/run
 2. Conveyor speed: /simulation/conveyorbelt/speed
-3. Generic station operation: /simulation/operation/invoke
+3. Robot MoveBox: /simulation/robot/movebox
+4. Generic station operation: /simulation/operation/invoke
 
 Base URL from other containers:
 
@@ -49,6 +50,7 @@ Configured in [opcua-operation-service/src/main/resources/application.yml](opcua
 1. Topic template: simulation/{stationId}/operations/{operation}
 2. Conveyor running topic: simulation/Station_01/operations/conveyorRunning
 3. Conveyor speed topic: simulation/Station_01/operations/conveyorSpeed
+4. Robot MoveBox topic example: simulation/Station_01/operations/moveBox
 
 The simulation listener must subscribe to matching topics.
 
@@ -63,11 +65,55 @@ Example qualifier for operation delegation:
 }
 ```
 
+MoveBox qualifier example for robot0:
+
+```json
+{
+        "type": "invocationDelegation",
+        "value": "http://opcua-operation-service:8087/simulation/robot/movebox"
+}
+```
+
 Key points:
 
 1. Qualifier type must be exactly invocationDelegation.
 2. URL must be reachable from aas-env container.
 3. AAS operation inputs are forwarded and parsed by the delegated service.
+4. MoveBox expects input variables Conveyor1 and Pallet1 (stationId is optional and defaults to Station_01).
+
+## Robot MoveBox Payload Contract
+
+For robot0 MoveBox operation delegation, define AAS input variables:
+
+1. Conveyor1 (xs:string)
+2. Pallet1 (xs:string)
+
+Optional input variable:
+
+1. stationId (xs:string), default Station_01
+
+The delegated service publishes this MQTT message shape:
+
+```json
+{
+        "requestId": "<generated-or-forwarded>",
+        "stationId": "Station_01",
+        "operation": "moveBox",
+        "params": {
+                "Conveyor1": "Conveyor1",
+                "Pallet1": "Pallet1"
+        }
+}
+```
+
+Python/OPC UA listener behavior should map operation=moveBox to the waypoint sequence:
+
+1. command=2 and execute=true (move to pick)
+2. execute=false and gripper=true (grip)
+3. command=3 and execute=true (move to place)
+4. continue with remaining waypoints and release sequence
+
+This keeps the operation interface stable while waypoint logic stays in the station controller.
 
 ## BaSyx Allowlist Requirement
 
