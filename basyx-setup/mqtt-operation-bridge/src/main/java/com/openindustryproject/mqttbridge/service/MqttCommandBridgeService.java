@@ -61,6 +61,12 @@ public class MqttCommandBridgeService implements MqttCallback {
     @Value("${bridge.invoke.conveyor.speed-idshort:speed}")
     private String speedIdShort;
 
+    @Value("${bridge.invoke.robot.move-box-url:}")
+    private String moveBoxInvokeUrl;
+
+    @Value("${bridge.invoke.robot.move-box-idshort:moveBox}")
+    private String moveBoxIdShort;
+
     private final ObjectMapper mapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newBuilder().build();
 
@@ -114,6 +120,11 @@ public class MqttCommandBridgeService implements MqttCallback {
 
         if (topic.endsWith("/speed")) {
             handleSpeed(topic, payload);
+            return;
+        }
+
+        if (topic.endsWith("/moveBox")) {
+            handleMoveBox(topic, payload);
             return;
         }
 
@@ -176,6 +187,57 @@ public class MqttCommandBridgeService implements MqttCallback {
         }
     }
 
+    private void handleMoveBox(String topic, String payload) {
+        if (moveBoxInvokeUrl == null || moveBoxInvokeUrl.isBlank()) {
+            logger.warn("move-box-url is empty; skipping moveBox command");
+            return;
+        }
+
+        String requestId = extractRequestId(payload);
+        String conveyor;
+        String pallet;
+
+        try {
+            JsonNode node = mapper.readTree(payload);
+            
+            // Match the loose fallback extraction logic used in your controller
+            conveyor = node.has("conveyor") ? node.get("conveyor").asText() : 
+                    node.has("Conveyor1") ? node.get("Conveyor1").asText() : "";
+                    
+            pallet = node.has("pallet") ? node.get("pallet").asText() : 
+                    node.has("Pallet1") ? node.get("Pallet1").asText() : "";
+
+            if (conveyor.isBlank() || pallet.isBlank()) {
+                throw new IllegalArgumentException("Missing required parameters: conveyor/Conveyor1 or pallet/Pallet1");
+            }
+        } catch (Exception e) {
+            logger.error("Invalid movebox command payload", e);
+            publishReply("moveBox", requestId, false, e.getMessage());
+            return;
+        }
+
+        try {
+            // Build an HTTP request with multiple input arguments
+            String body = buildMultiInvokeRequest(moveBoxIdShort, conveyor, pallet);
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(moveBoxInvokeUrl))
+                    .timeout(Duration.ofMillis(timeoutMs))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            logger.info("Invoke {} returned status {}", moveBoxInvokeUrl, response.statusCode());
+
+            boolean success = response.statusCode() >= 200 && response.statusCode() < 300;
+            publishReply("moveBox", requestId, success, response.body());
+        } catch (Exception e) {
+            logger.error("Failed to invoke movebox operation", e);
+            publishReply("moveBox", requestId, false, e.getMessage());
+        }
+    }
+
     private HttpResponse<String> invokeOperation(String url, String idShort, String valueType, String value)
             throws IOException, InterruptedException {
         String body = buildInvokeRequest(idShort, valueType, value);
@@ -208,6 +270,32 @@ public class MqttCommandBridgeService implements MqttCallback {
 
         return root.toString();
     }
+
+    private String buildMultiInvokeRequest(String idShort, String conveyor, String pallet) {
+        ObjectNode root = mapper.createObjectNode();
+        ArrayNode inputArguments = root.putArray("inputArguments");
+
+        // Argument 1: Conveyor
+        ObjectNode wrapper1 = inputArguments.addObject();
+        ObjectNode valueNode1 = wrapper1.putObject("value");
+        valueNode1.put("modelType", "Property");
+        valueNode1.put("idShort", "Conveyor1");
+        valueNode1.put("valueType", "xs:string");
+        valueNode1.put("value", conveyor);
+
+        // Argument 2: Pallet
+        ObjectNode wrapper2 = inputArguments.addObject();
+        ObjectNode valueNode2 = wrapper2.putObject("value");
+        valueNode2.put("modelType", "Property");
+        valueNode2.put("idShort", "Pallet1");
+        valueNode2.put("valueType", "xs:string");
+        valueNode2.put("value", pallet);
+
+        root.putArray("inoutputArguments");
+        root.put("requestedTimeout", timeoutMs);
+
+        return root.toString();
+   }
 
     private String extractRequestId(String payload) {
         try {

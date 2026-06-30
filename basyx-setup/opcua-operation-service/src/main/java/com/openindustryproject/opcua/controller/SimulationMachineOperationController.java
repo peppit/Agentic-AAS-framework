@@ -117,7 +117,7 @@ public class SimulationMachineOperationController {
         }
     }
 
-    @PostMapping(value = "/simulation/robot/movebox", produces = MediaType.APPLICATION_JSON_VALUE)
+    @PostMapping(value = {"/simulation/robot/movebox", "/simulation/robot/move-to-position"}, produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<Map<String, Object>> moveBox(@RequestBody String input) {
         logger.info("Executing robot MoveBox operation");
         logger.debug("Input received: {}", input);
