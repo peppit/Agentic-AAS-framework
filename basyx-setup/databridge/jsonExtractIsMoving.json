@@ -1,0 +1,8 @@
+$type($) = "object" ? (
+  $val := isMoving;
+  $type($val) = "string" ? (
+    $s := $lowercase($trim($val));
+    $s = "true" ? true :
+    $s = "false" ? false : $number($val)
+  ) : $val
+) : $

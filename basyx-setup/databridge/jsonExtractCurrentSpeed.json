@@ -1,0 +1,4 @@
+$type($) = "object" ? (
+  $val := currentSpeed;
+  $type($val) = "string" ? $number($val) : $val
+) : $

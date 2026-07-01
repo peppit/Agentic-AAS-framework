@@ -1,18 +1,13 @@
 $type($) = "object" ? (
-    $exists(isRunning) ? (
-        $type(isRunning) = "string" ? ($lowercase(isRunning) = "true") : $boolean(isRunning)
-    ) : 
-    $exists(boxDetected) ? (
-        $type(boxDetected) = "string" ? ($lowercase(boxDetected) = "true") : $boolean(boxDetected)
-    ) : 
-    $exists(isMoving) ? (
-        $type(isMoving) = "string" ? ($lowercase(isMoving) = "true") : $boolean(isMoving)
-    ) : 
-    $exists(currentSpeed) ? $number(currentSpeed) :
-    $exists(value) ? (
-        $type(value) = "string" ? (
-            $lowercase(value) = "true" ? true :
-            $lowercase(value) = "false" ? false : $number(value)
-        ) : value
-    ) : $
+  $val := $exists(isRunning) ? isRunning :
+    $exists(boxDetected) ? boxDetected :
+    $exists(isMoving) ? isMoving :
+    $exists(currentSpeed) ? currentSpeed :
+    $exists(value) ? value : $;
+
+  $type($val) = "string" ? (
+    $s := $lowercase($trim($val));
+    $s = "true" ? true :
+    $s = "false" ? false : $number($val)
+  ) : $val
 ) : $

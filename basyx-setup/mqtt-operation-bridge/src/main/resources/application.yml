@@ -15,6 +15,9 @@ bridge:
       running-idshort: running
       speed-url: http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vMzEyMV8xMTQyXzYwNjJfMzY3NQ/submodel-elements/Speed/invoke
       speed-idshort: speed
+    robot:
+      move-box-url: http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Nw/submodel-elements/MoveBox/invoke
+      move-box-idshort: moveBox
 
 logging:
   level:
