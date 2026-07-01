@@ -34,12 +34,6 @@ public class MqttCommandPublisherService {
     @Value("${simulation.mqtt.topic-template:simulation/{stationId}/command/{operation}}")
     private String topicTemplate;
 
-    @Value("${simulation.mqtt.conveyor.running-topic:oip/command/conveyorbelt/running}")
-    private String conveyorRunningTopic;
-
-    @Value("${simulation.mqtt.conveyor.speed-topic:oip/command/conveyorbelt/speed}")
-    private String conveyorSpeedTopic;
-
     private MqttClient client;
 
     @PostConstruct
@@ -78,14 +72,6 @@ public class MqttCommandPublisherService {
         } catch (MqttException e) {
             logger.warn("Error closing simulation MQTT publisher", e);
         }
-    }
-
-    public void publishConveyorRunning(String payload) throws Exception {
-        publish(conveyorRunningTopic, payload);
-    }
-
-    public void publishConveyorSpeed(String payload) throws Exception {
-        publish(conveyorSpeedTopic, payload);
     }
 
     public void publishStationOperation(String stationId, String operation, String payload) throws Exception {

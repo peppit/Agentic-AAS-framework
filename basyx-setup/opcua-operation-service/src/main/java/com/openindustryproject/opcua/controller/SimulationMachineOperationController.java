@@ -36,7 +36,7 @@ public class SimulationMachineOperationController {
     }
 
         @PostMapping(
-            value = {"/simulation/operation/invoke", "/simulation/stations/{stationId}/operation/invoke"},
+            value = { "/simulation/stations/{stationId}/operation/invoke"},
             produces = MediaType.APPLICATION_JSON_VALUE)
         public ResponseEntity<Map<String, Object>> invokeSimulationOperation(
             @RequestBody String input,
@@ -186,6 +186,36 @@ public class SimulationMachineOperationController {
             logger.error("Error executing robot MoveBox operation", e);
             return buildErrorResponse("MoveBox", e);
         }
+    }
+        @PostMapping(
+                value = {"/simulation/stations/{stationId}/robot/move-to-home"},
+                produces = MediaType.APPLICATION_JSON_VALUE)
+            public ResponseEntity<Map<String, Object>> moveToHome(
+                @RequestBody String input,
+                @PathVariable(value = "stationId", required = false) String stationIdFromPath) {
+            logger.info("Executing robot move-to-home operation");
+            logger.debug("Input received: {}", input);
+
+            try {
+                JsonObject root = parseInputRoot(input);
+                String requestId = extractRequestId(root, input);
+                String stationId = extractRequiredStationId(root, stationIdFromPath);
+                boolean move = parseBooleanInput(input, "move", false);
+
+                String payload = String.format("{\"requestId\":\"%s\",\"value\":%s}", requestId, move);
+                mqttPublisher.publishStationRobotOperation(stationId, "MoveToHome", payload);
+
+                Map<String, Object> response = new HashMap<>();
+                response.put("status", "SUCCESS");
+                response.put("message", "Robot move-to-home command published");
+                response.put("requestId", requestId);
+                response.put("stationId", stationId);
+                response.put("move", move);
+                return ResponseEntity.ok(response);
+            } catch (Exception e) {
+                logger.error("Error executing robot move-to-home operation", e);
+                return buildErrorResponse("MoveToHome", e);
+            }
     }
 
     private ResponseEntity<Map<String, Object>> buildErrorResponse(String operationName, Exception e) {

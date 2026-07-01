@@ -18,6 +18,8 @@ bridge:
     robot:
       move-box-url: http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Nw/submodel-elements/MoveBox/invoke
       move-box-idshort: moveBox
+      move-to-home-url: http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Nw/submodel-elements/MoveToHome/invoke
+      move-to-home-idshort: moveToHome
 
 logging:
   level:

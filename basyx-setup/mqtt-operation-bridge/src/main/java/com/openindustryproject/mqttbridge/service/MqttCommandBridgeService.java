@@ -67,6 +67,12 @@ public class MqttCommandBridgeService implements MqttCallback {
     @Value("${bridge.invoke.robot.move-box-idshort:moveBox}")
     private String moveBoxIdShort;
 
+    @Value("${bridge.invoke.robot.move-to-home-url:}")
+    private String moveToHomeInvokeUrl;
+
+    @Value("${bridge.invoke.robot.move-to-home-idshort:moveToHome}")
+    private String moveToHomeIdShort;
+
     private final ObjectMapper mapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newBuilder().build();
 
@@ -125,6 +131,11 @@ public class MqttCommandBridgeService implements MqttCallback {
 
         if (topic.endsWith("/moveBox")) {
             handleMoveBox(topic, payload);
+            return;
+        }
+
+        if (topic.endsWith("/moveToHome")) {
+            handleMoveToHome(topic, payload);
             return;
         }
 
@@ -235,6 +246,32 @@ public class MqttCommandBridgeService implements MqttCallback {
         } catch (Exception e) {
             logger.error("Failed to invoke movebox operation", e);
             publishReply("moveBox", requestId, false, e.getMessage());
+        }
+    }
+
+    private void handleMoveToHome(String topic, String payload) {
+        if (moveHomeInvokeUrl == null || moveHomeInvokeUrl.isBlank()) {
+            logger.warn("move-to-home-url is empty; skipping moveToHome command");
+            return;
+        }
+
+        String requestId = extractRequestId(payload);
+        boolean value;
+        try {
+            value = parseBooleanValue(payload, "move");
+        } catch (Exception e) {
+            logger.error("Invalid moveToHome command payload", e);
+            publishReply("moveToHome", requestId, false, e.getMessage());
+            return;
+        }
+
+        try {
+            HttpResponse<String> response = invokeOperation(moveHomeInvokeUrl, moveHomeIdShort, "xs:boolean", String.valueOf(value));
+            boolean success = response.statusCode() >= 200 && response.statusCode() < 300;
+            publishReply("moveToHome", requestId, success, response.body());
+        } catch (Exception e) {
+            logger.error("Failed to invoke moveToHome operation", e);
+            publishReply("moveToHome", requestId, false, e.getMessage());
         }
     }
 
