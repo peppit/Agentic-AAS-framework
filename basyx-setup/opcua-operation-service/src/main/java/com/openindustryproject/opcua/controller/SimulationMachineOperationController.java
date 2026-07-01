@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -34,15 +35,19 @@ public class SimulationMachineOperationController {
         this.mqttPublisher = mqttPublisher;
     }
 
-    @PostMapping(value = "/simulation/operation/invoke", produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<Map<String, Object>> invokeSimulationOperation(@RequestBody String input) {
+        @PostMapping(
+            value = {"/simulation/operation/invoke", "/simulation/stations/{stationId}/operation/invoke"},
+            produces = MediaType.APPLICATION_JSON_VALUE)
+        public ResponseEntity<Map<String, Object>> invokeSimulationOperation(
+            @RequestBody String input,
+            @PathVariable(value = "stationId", required = false) String stationIdFromPath) {
         logger.info("Executing generic simulation operation");
         logger.debug("Input received: {}", input);
 
         try {
             JsonObject root = parseInputRoot(input);
             String requestId = extractRequestId(root, input);
-            String stationId = extractRequiredStationId(root);
+            String stationId = extractRequiredStationId(root, stationIdFromPath);
             String operation = extractStringParameter(root, "operation", null);
 
             if (operation == null || operation.isBlank()) {
@@ -67,15 +72,19 @@ public class SimulationMachineOperationController {
         }
     }
 
-    @PostMapping(value = "/simulation/conveyorbelt/run", produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<Map<String, Object>> setConveyorRunning(@RequestBody String input) {
+        @PostMapping(
+            value = {"/simulation/stations/{stationId}/conveyorbelt/run"},
+            produces = MediaType.APPLICATION_JSON_VALUE)
+        public ResponseEntity<Map<String, Object>> setConveyorRunning(
+            @RequestBody String input,
+            @PathVariable(value = "stationId", required = false) String stationIdFromPath) {
         logger.info("Executing conveyor running operation");
         logger.debug("Input received: {}", input);
 
         try {
             JsonObject root = parseInputRoot(input);
             String requestId = extractRequestId(root, input);
-            String stationId = extractRequiredStationId(root);
+            String stationId = extractRequiredStationId(root, stationIdFromPath);
             boolean running = parseBooleanInput(input, "running", false);
 
             String payload = String.format("{\"requestId\":\"%s\",\"value\":%s}", requestId, running);
@@ -94,15 +103,19 @@ public class SimulationMachineOperationController {
         }
     }
 
-    @PostMapping(value = "/simulation/conveyorbelt/speed", produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<Map<String, Object>> setConveyorSpeed(@RequestBody String input) {
+        @PostMapping(
+            value = {"/simulation/stations/{stationId}/conveyorbelt/speed"},
+            produces = MediaType.APPLICATION_JSON_VALUE)
+        public ResponseEntity<Map<String, Object>> setConveyorSpeed(
+            @RequestBody String input,
+            @PathVariable(value = "stationId", required = false) String stationIdFromPath) {
         logger.info("Executing conveyor speed operation");
         logger.debug("Input received: {}", input);
 
         try {
             JsonObject root = parseInputRoot(input);
             String requestId = extractRequestId(root, input);
-            String stationId = extractRequiredStationId(root);
+            String stationId = extractRequiredStationId(root, stationIdFromPath);
             double speed = parseDoubleInput(input, "speed", 0.0);
 
             String payload = String.format("{\"requestId\":\"%s\",\"value\":%s}", requestId, speed);
@@ -121,15 +134,19 @@ public class SimulationMachineOperationController {
         }
     }
 
-    @PostMapping(value = {"/simulation/robot/movebox"}, produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<Map<String, Object>> moveBox(@RequestBody String input) {
+        @PostMapping(
+            value = {"/simulation/stations/{stationId}/robot/movebox"},
+            produces = MediaType.APPLICATION_JSON_VALUE)
+        public ResponseEntity<Map<String, Object>> moveBox(
+            @RequestBody String input,
+            @PathVariable(value = "stationId", required = false) String stationIdFromPath) {
         logger.info("Executing robot MoveBox operation");
         logger.debug("Input received: {}", input);
 
         try {
             JsonObject root = parseInputRoot(input);
             String requestId = extractRequestId(root, input);
-            String stationId = extractRequiredStationId(root);
+            String stationId = extractRequiredStationId(root, stationIdFromPath);
             JsonObject extractedParams = extractParams(root);
             String conveyor = extractStringParameterAny(root, null, "Conveyor1", "conveyor1", "Conveyor", "conveyor", "SourcePosition", "sourcePosition") ;
             if (conveyor == null || conveyor.isBlank()) {
@@ -283,7 +300,11 @@ public class SimulationMachineOperationController {
         return null;
     }
 
-    private String extractRequiredStationId(JsonObject root) {
+    private String extractRequiredStationId(JsonObject root, String stationIdFromPath) {
+        if (stationIdFromPath != null && !stationIdFromPath.isBlank()) {
+            return stationIdFromPath;
+        }
+
         String stationId = extractStringParameterAny(root, null, "stationId", "StationId");
         if (stationId != null && !stationId.isBlank()) {
             return stationId;
