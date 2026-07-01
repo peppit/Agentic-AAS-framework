@@ -42,7 +42,7 @@ public class SimulationMachineOperationController {
         try {
             JsonObject root = parseInputRoot(input);
             String requestId = extractRequestId(root, input);
-            String stationId = extractStringParameter(root, "stationId", "Station_01");
+            String stationId = extractRequiredStationId(root);
             String operation = extractStringParameter(root, "operation", null);
 
             if (operation == null || operation.isBlank()) {
@@ -73,17 +73,19 @@ public class SimulationMachineOperationController {
         logger.debug("Input received: {}", input);
 
         try {
-            boolean running = parseBooleanInput(input, "running", false);
             JsonObject root = parseInputRoot(input);
             String requestId = extractRequestId(root, input);
+            String stationId = extractRequiredStationId(root);
+            boolean running = parseBooleanInput(input, "running", false);
 
             String payload = String.format("{\"requestId\":\"%s\",\"value\":%s}", requestId, running);
-            mqttPublisher.publishConveyorRunning(payload);
+            mqttPublisher.publishStationOperation(stationId, "conveyorRunning", payload);
 
             Map<String, Object> response = new HashMap<>();
             response.put("status", "SUCCESS");
             response.put("message", "Conveyor running command published");
             response.put("requestId", requestId);
+            response.put("stationId", stationId);
             response.put("running", running);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
@@ -98,17 +100,19 @@ public class SimulationMachineOperationController {
         logger.debug("Input received: {}", input);
 
         try {
-            double speed = parseDoubleInput(input, "speed", 0.0);
             JsonObject root = parseInputRoot(input);
             String requestId = extractRequestId(root, input);
+            String stationId = extractRequiredStationId(root);
+            double speed = parseDoubleInput(input, "speed", 0.0);
 
             String payload = String.format("{\"requestId\":\"%s\",\"value\":%s}", requestId, speed);
-            mqttPublisher.publishConveyorSpeed(payload);
+            mqttPublisher.publishStationOperation(stationId, "conveyorSpeed", payload);
 
             Map<String, Object> response = new HashMap<>();
             response.put("status", "SUCCESS");
             response.put("message", "Conveyor speed command published");
             response.put("requestId", requestId);
+            response.put("stationId", stationId);
             response.put("speed", speed);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
@@ -125,7 +129,7 @@ public class SimulationMachineOperationController {
         try {
             JsonObject root = parseInputRoot(input);
             String requestId = extractRequestId(root, input);
-            String stationId = extractStringParameterAny(root, "Station_01", "stationId", "StationId");
+            String stationId = extractRequiredStationId(root);
             JsonObject extractedParams = extractParams(root);
             String conveyor = extractStringParameterAny(root, null, "Conveyor1", "conveyor1", "Conveyor", "conveyor", "SourcePosition", "sourcePosition") ;
             if (conveyor == null || conveyor.isBlank()) {
@@ -277,6 +281,21 @@ public class SimulationMachineOperationController {
         }
 
         return null;
+    }
+
+    private String extractRequiredStationId(JsonObject root) {
+        String stationId = extractStringParameterAny(root, null, "stationId", "StationId");
+        if (stationId != null && !stationId.isBlank()) {
+            return stationId;
+        }
+
+        JsonObject params = extractParams(root);
+        stationId = extractStringFromParams(params, "stationId", "StationId");
+        if (stationId != null && !stationId.isBlank()) {
+            return stationId;
+        }
+
+        throw new IllegalArgumentException("Missing required parameter: stationId");
     }
 
     private String normalizeIdShort(String raw) {
