@@ -167,4 +167,27 @@ services:
       aas-env:
         condition: service_healthy
 
+  python-agent:
+    build:
+      context: ./python-agent
+      dockerfile: Dockerfile
+    container_name: python-agent
+    environment:
+      - MQTT_HOST=mosquitto
+      - MQTT_PORT=1883
+      - MQTT_TOPIC=sm-repository/+/submodels/+/submodelElements/+/updated
+      - BOX_DETECTED_PROPERTY=Sensor_BoxPresent
+      - ROBOT_STATE_PROPERTY=IsMoving
+      - MOVEBOX_INVOKE_URL=http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Nw/submodel-elements/MoveBox/invoke
+      - MOVEBOX_CONVEYOR=Conveyor1
+      - MOVEBOX_PALLET=Pallet1
+      - HTTP_TIMEOUT_SECONDS=8
+      - EVENT_DEBOUNCE_SECONDS=1.5
+    restart: always
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      aas-env:
+        condition: service_healthy
+
 

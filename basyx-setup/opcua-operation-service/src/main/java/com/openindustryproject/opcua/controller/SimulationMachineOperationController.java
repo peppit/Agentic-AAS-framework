@@ -203,7 +203,7 @@ public class SimulationMachineOperationController {
                 boolean move = parseBooleanInput(input, "move", false);
 
                 String payload = String.format("{\"requestId\":\"%s\",\"value\":%s}", requestId, move);
-                mqttPublisher.publishStationRobotOperation(stationId, "MoveToHome", payload);
+                mqttPublisher.publishStationOperation(stationId, "MoveToHome", payload);
 
                 Map<String, Object> response = new HashMap<>();
                 response.put("status", "SUCCESS");
