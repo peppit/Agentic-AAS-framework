@@ -173,16 +173,18 @@ services:
       dockerfile: Dockerfile
     container_name: python-agent
     environment:
+      - BASYX_BASE_URL=http://aas-env:8081
       - MQTT_HOST=mosquitto
       - MQTT_PORT=1883
       - MQTT_TOPIC=sm-repository/+/submodels/+/submodelElements/+/updated
-      - BOX_DETECTED_PROPERTY=Sensor_BoxPresent
-      - ROBOT_STATE_PROPERTY=IsMoving
-      - MOVEBOX_INVOKE_URL=http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Nw/submodel-elements/MoveBox/invoke
-      - MOVEBOX_CONVEYOR=Conveyor1
-      - MOVEBOX_PALLET=Pallet1
       - HTTP_TIMEOUT_SECONDS=8
-      - EVENT_DEBOUNCE_SECONDS=1.5
+      - ROBOT_SETTLE_TIMEOUT_SECONDS=45
+      - ROBOT_STATUS_POLL_SECONDS=0.4
+      - ROBOT_MOTION_START_GRACE_SECONDS=1.0
+      - SENSOR_TRUE_REARM_SECONDS=2.0
+      - REGISTERED_ROBOTS=aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Nw
+      - ROBOT_SUBMODEL_BINDINGS=aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTExNV85MDgxXzYwNjJfMTg2NQ|aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Nw
+
     restart: always
     depends_on:
       mosquitto:
