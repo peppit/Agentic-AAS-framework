@@ -4,7 +4,6 @@ import os
 import time
 from dataclasses import dataclass
 from typing import Optional
-
 import httpx
 from aiomqtt import Client as MqttClient
 from aiomqtt import MqttError
@@ -14,9 +13,7 @@ from aiomqtt import MqttError
 class AgentConfig:
     mqtt_host: str = os.getenv("MQTT_HOST", "mosquitto")
     mqtt_port: int = int(os.getenv("MQTT_PORT", "1883"))
-    mqtt_topic: str = os.getenv(
-        "MQTT_TOPIC", "sm-repository/+/submodels/+/submodelElements/+/updated"
-    )
+    mqtt_topic: str = os.getenv("MQTT_TOPIC", "sm-repository/+/submodels/+/submodelElements/+/updated")
     basyx_base_url: str = os.getenv("BASYX_BASE_URL", "http://aas-env:8081") 
     http_timeout_seconds: float = float(os.getenv("HTTP_TIMEOUT_SECONDS", "8"))
     robot_settle_timeout_seconds: float = float(os.getenv("ROBOT_SETTLE_TIMEOUT_SECONDS", "45"))
@@ -34,7 +31,7 @@ class RobotEndpoints:
 
 
 def normalize_submodel_id(submodel_id: str) -> str:
-    # BaSyx submodel identifiers in URLs are URL-safe base64 without padding.  KOKEILE POISTAA TÄMÄN KÄYTTÖ
+    # BaSyx submodel identifiers in URLs are URL-safe base64 without padding
     return submodel_id.strip().replace("+", "-").replace("/", "_").rstrip("=")
 
 
@@ -49,27 +46,15 @@ def parse_bool_value(raw_payload: str) -> Optional[bool]:
         parsed = json.loads(text)
         if isinstance(parsed, bool):
             return parsed
-        if isinstance(parsed, str):
-            return parse_bool_value(parsed)
         if isinstance(parsed, (int, float)):
             return bool(parsed)
         if isinstance(parsed, dict):
             for key in ("value", "newValue", "payload"):
-                if key not in parsed:
-                    continue
-                nested = parsed[key]
-                if isinstance(nested, bool):
-                    return nested
-                if isinstance(nested, (str, int, float)):
-                    nested_bool = parse_bool_value(str(nested))
-                    if nested_bool is not None:
-                        return nested_bool
-                if isinstance(nested, dict):
-                    for nested_key in ("value", "newValue", "payload"):
-                        if nested_key in nested:
-                            nested_bool = parse_bool_value(str(nested[nested_key]))
-                            if nested_bool is not None:
-                                return nested_bool
+                if key in parsed:
+                    val = parsed[key]
+                    if isinstance(val, bool):
+                        return val
+                    return parse_bool_value(str(val))
     except json.JSONDecodeError:
         pass
     return None
@@ -123,8 +108,7 @@ class FactoryOrchestrator:
     async def handle_event(self, submodel_b64: str, property_id: str, payload: str) -> None:
         bool_value = parse_bool_value(payload)
         
-
-        if "Present" not in property_id and "Clear" not in property_id:  #What is clear?
+        if "Present" not in property_id and "Clear" not in property_id: 
             return
 
         if bool_value is None:
@@ -144,9 +128,6 @@ class FactoryOrchestrator:
                 print(
                     f"[ORCHESTRATOR] Sensor '{property_id}' on Conveyor '{submodel_b64}' cleared; ready for next box detection"
                 )
-            return
-
-        if bool_value is not True:
             return
 
         # After dispatching one move for this sensor, require an explicit clear (false)
@@ -225,11 +206,7 @@ class FactoryOrchestrator:
 
                 # Fallback success: some stacks never toggle IsMoving reliably.
                 # After a grace period, repeated false readings indicate robot is idle.
-                if (
-                    not saw_moving
-                    and asyncio.get_running_loop().time() >= grace_until
-                    and consecutive_not_moving >= 3
-                ):
+                if (not saw_moving and asyncio.get_running_loop().time() >= grace_until and consecutive_not_moving >= 3):
                     return True
 
             await asyncio.sleep(self.config.robot_status_poll_seconds)
@@ -296,17 +273,12 @@ class FactoryOrchestrator:
                     elements = {elem["idShort"]: elem.get("value") for elem in route_values if "idShort" in elem}
                     if elements.get("TriggerSensor") == triggering_sensor:
                         matched_route = route
+                        target_op = elements.get("TargetOperation")
                         break
 
                 if not matched_route:
                     continue # This robot doesn't have a route for this sensor, try next robot
 
-                matched_elements = {
-                    elem["idShort"]: elem.get("value")
-                    for elem in matched_route.get("value", [])
-                    if "idShort" in elem
-                }
-                target_op = matched_elements.get("TargetOperation")
                 if not target_op:
                     print(
                         f"[ORCHESTRATOR] Route matched for sensor {triggering_sensor} on robot {robot.skills_submodel_b64} "
@@ -354,13 +326,7 @@ class FactoryOrchestrator:
                 response = await client.post(invoke_url, json=body)
                 print(f"[ORCHESTRATOR] Response status from robot: {response.status_code}")
 
-                if 200 <= response.status_code < 300:
-                    if triggering_sensor_key:
-                        self.sensor_waiting_for_clear[triggering_sensor_key] = True
-                        print(
-                            f"[ORCHESTRATOR] Sensor '{triggering_sensor}' latched until it clears (false) before next move"
-                        )
-                await self._manage_robot_cooldown(client, robot, state_url)
+                asyncio.create_task(self._manage_robot_cooldown(client, robot, state_url))
                 return # Match completed successfully! Stop looking at other robots.
             
             print(f"[ORCHESTRATOR] Resource Warning: No available robots can currently service sensor {triggering_sensor}")
