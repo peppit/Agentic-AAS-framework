@@ -32,12 +32,6 @@ The .env file is excluded from git via .gitignore.
 docker compose up -d
 ```
 
-To rebuild operation services after code changes:
-
-```
-docker compose up -d --build opcua-operation-service mqtt-operation-bridge
-```
-
 ## Available Services
 
 - AAS Environment: [http://localhost:8081](http://localhost:8081)
@@ -49,6 +43,7 @@ docker compose up -d --build opcua-operation-service mqtt-operation-bridge
 - Operation Delegation Service: [http://localhost:8087](http://localhost:8087)
 - MQTT Operation Bridge: [http://localhost:8091](http://localhost:8091)
 - Mosquitto MQTT Broker: localhost:1883
+- Python Agent: background worker (no public HTTP port)
 
 ## OPI Simulation Delegation Flow
 
@@ -69,7 +64,28 @@ The mqtt-operation-bridge service supports MQTT-first command flow:
 2. Invokes AAS operation endpoints via aas-env.
 3. Publishes replies to oip/reply/conveyorbelt.
 
-Bridge invoke URLs are configured in [docker-compose.yml](docker-compose.yml) with BRIDGE_INVOKE_CONVEYOR_RUNNING_URL and BRIDGE_INVOKE_CONVEYOR_SPEED_URL.
+Bridge invoke URLs are configured in [docker-compose.yml](docker-compose.yml). Conveyor running/speed are enabled by default. Robot moveBox/moveToHome URLs are optional and can be enabled by adding corresponding bridge env vars.
+
+## Python Agent (Event-Driven Robot Orchestration)
+
+The python-agent listens to AAS submodel update events and dispatches robot operations dynamically from robot capability metadata.
+
+Current behavior:
+
+1. Subscribes to MQTT topic sm-repository/+/submodels/+/submodelElements/+/updated.
+2. Processes boolean sensor properties whose idShort contains Present or Clear.
+3. Enqueues a job on valid detection and routes it to a robot by matching TriggerSensor -> TargetOperation in SupportedCapabilities.
+4. Latches each triggering sensor after a successful dispatch and requires that sensor to clear (false) before accepting the next true detection.
+5. Polls IsMoving and waits for robot motion to settle before cooldown completion.
+
+Key python-agent environment variables (see [docker-compose.yml](docker-compose.yml)):
+
+1. BASYX_BASE_URL
+2. MQTT_HOST / MQTT_PORT / MQTT_TOPIC
+3. ROBOT_SUBMODEL_BINDINGS (preferred): stateSubmodelId|skillsSubmodelId[,state|skills...]
+4. REGISTERED_ROBOTS (legacy fallback when bindings are not provided)
+5. ROBOT_SETTLE_TIMEOUT_SECONDS, ROBOT_STATUS_POLL_SECONDS, ROBOT_MOTION_START_GRACE_SECONDS
+6. SENSOR_TRUE_REARM_SECONDS
 
 ## Include Your Own Asset Administration Shells
 

@@ -34,10 +34,11 @@ MQTT command topic -> mqtt-operation-bridge -> AAS operation invoke endpoint
 
 Use these HTTP endpoints as operation delegation targets:
 
-1. Conveyor running: /simulation/conveyorbelt/run
-2. Conveyor speed: /simulation/conveyorbelt/speed
-3. Robot MoveBox: /simulation/robot/movebox
-4. Generic station operation: /simulation/operation/invoke
+1. Conveyor running: /simulation/stations/{stationId}/conveyorbelt/run
+2. Conveyor speed: /simulation/stations/{stationId}/conveyorbelt/speed
+3. Robot MoveBox: /simulation/stations/{stationId}/robot/movebox
+4. Robot MoveToHome: /simulation/stations/{stationId}/robot/move-to-home
+5. Generic station operation: /simulation/stations/{stationId}/operation/invoke
 
 Base URL from other containers:
 
@@ -61,7 +62,7 @@ Example qualifier for operation delegation:
 ```json
 {
   "type": "invocationDelegation",
-  "value": "http://opcua-operation-service:8087/simulation/conveyorbelt/speed"
+        "value": "http://opcua-operation-service:8087/simulation/stations/Station_01/conveyorbelt/speed"
 }
 ```
 
@@ -70,7 +71,7 @@ MoveBox qualifier example for robot0:
 ```json
 {
         "type": "invocationDelegation",
-        "value": "http://opcua-operation-service:8087/simulation/robot/movebox"
+        "value": "http://opcua-operation-service:8087/simulation/stations/Station_01/robot/movebox"
 }
 ```
 
@@ -79,7 +80,8 @@ Key points:
 1. Qualifier type must be exactly invocationDelegation.
 2. URL must be reachable from aas-env container.
 3. AAS operation inputs are forwarded and parsed by the delegated service.
-4. MoveBox expects input variables Conveyor1 and Pallet1 (stationId is optional and defaults to Station_01).
+4. MoveBox expects input variables Conveyor1 and Pallet1.
+5. stationId is path-based in the delegation URL and should match the intended station.
 
 ## Robot MoveBox Payload Contract
 
@@ -90,7 +92,7 @@ For robot0 MoveBox operation delegation, define AAS input variables:
 
 Optional input variable:
 
-1. stationId (xs:string), default Station_01
+1. stationId (xs:string) can still be included for downstream payload clarity, but routing is primarily path-based.
 
 The delegated service publishes this MQTT message shape:
 
@@ -135,8 +137,8 @@ docker compose up -d
 2. Test delegated endpoints directly:
 
 ```powershell
-Invoke-RestMethod -Uri "http://localhost:8087/simulation/conveyorbelt/run" -Method Post -ContentType "application/json" -Body '{"running":true}'
-Invoke-RestMethod -Uri "http://localhost:8087/simulation/conveyorbelt/speed" -Method Post -ContentType "application/json" -Body '{"speed":55.0}'
+Invoke-RestMethod -Uri "http://localhost:8087/simulation/stations/Station_01/conveyorbelt/run" -Method Post -ContentType "application/json" -Body '{"running":true}'
+Invoke-RestMethod -Uri "http://localhost:8087/simulation/stations/Station_01/conveyorbelt/speed" -Method Post -ContentType "application/json" -Body '{"speed":55.0}'
 ```
 
 3. Invoke the operation from AAS Web UI and verify published MQTT messages.

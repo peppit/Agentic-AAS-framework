@@ -250,7 +250,7 @@ public class MqttCommandBridgeService implements MqttCallback {
     }
 
     private void handleMoveToHome(String topic, String payload) {
-        if (moveHomeInvokeUrl == null || moveHomeInvokeUrl.isBlank()) {
+        if (moveToHomeInvokeUrl == null || moveToHomeInvokeUrl.isBlank()) {
             logger.warn("move-to-home-url is empty; skipping moveToHome command");
             return;
         }
@@ -266,7 +266,7 @@ public class MqttCommandBridgeService implements MqttCallback {
         }
 
         try {
-            HttpResponse<String> response = invokeOperation(moveHomeInvokeUrl, moveHomeIdShort, "xs:boolean", String.valueOf(value));
+            HttpResponse<String> response = invokeOperation(moveToHomeInvokeUrl, moveToHomeIdShort, "xs:boolean", String.valueOf(value));
             boolean success = response.statusCode() >= 200 && response.statusCode() < 300;
             publishReply("moveToHome", requestId, success, response.body());
         } catch (Exception e) {
