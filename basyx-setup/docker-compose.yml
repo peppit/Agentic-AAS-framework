@@ -180,10 +180,16 @@ services:
       - HTTP_TIMEOUT_SECONDS=8
       - ROBOT_SETTLE_TIMEOUT_SECONDS=45
       - ROBOT_STATUS_POLL_SECONDS=0.4
-      - ROBOT_MOTION_START_GRACE_SECONDS=1.0
+      - ROBOT_MOTION_START_GRACE_SECONDS=5.0
       - SENSOR_TRUE_REARM_SECONDS=2.0
       - REGISTERED_ROBOTS=aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Nw
       - ROBOT_SUBMODEL_BINDINGS=aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTExNV85MDgxXzYwNjJfMTg2NQ|aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Nw
+      - ORCHESTRATOR_LOG_CSV_PATH=/app/orchestrator_logs.csv
+      - ORCHESTRATOR_SUMMARY_CSV_PATH=/app/orchestrator_summary.csv
+      - SUMMARY_BATCH_SIZE=5
+    volumes:
+      - ../orchestrator_logs.csv:/app/orchestrator_logs.csv
+      - ../orchestrator_summary.csv:/app/orchestrator_summary.csv
 
     restart: always
     depends_on:

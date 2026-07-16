@@ -1,12 +1,16 @@
 import asyncio
+import csv
 import json
 import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
+from statistics import mean
 from typing import Optional
 import httpx
 from aiomqtt import Client as MqttClient
 from aiomqtt import MqttError
+import traceback
 
 
 @dataclass(frozen=True)
@@ -22,6 +26,15 @@ class AgentConfig:
     sensor_true_rearm_seconds: float = float(os.getenv("SENSOR_TRUE_REARM_SECONDS", "2.0"))
     register_robots: str = os.getenv("REGISTERED_ROBOTS", "")
     robot_submodel_bindings: str = os.getenv("ROBOT_SUBMODEL_BINDINGS", "")
+    orchestrator_log_csv_path: str = os.getenv(
+        "ORCHESTRATOR_LOG_CSV_PATH",
+        str(Path(__file__).resolve().parent / "orchestrator_logs.csv"),
+    )
+    orchestrator_summary_csv_path: str = os.getenv(
+        "ORCHESTRATOR_SUMMARY_CSV_PATH",
+        str(Path(__file__).resolve().parent / "orchestrator_summary.csv"),
+    )
+    summary_batch_size: int = int(os.getenv("SUMMARY_BATCH_SIZE", "5"))
 
 
 @dataclass(frozen=True)
@@ -64,13 +77,170 @@ class FactoryOrchestrator:
     def __init__(self, config: AgentConfig):
         self.config = config
         self.job_queue = asyncio.Queue()
+        self.dispatch_queue = asyncio.Queue()
         self.active_jobs = set()
         self.sensor_states: dict[str, bool] = {}
         self.sensor_last_true_at: dict[str, float] = {}
         self.sensor_waiting_for_clear: dict[str, bool] = {}
+        self.log_lock = asyncio.Lock()
+        self.log_headers = [
+            "t1_ms",
+            "t2_ms",
+            "t3_ms",
+        ]
+        self.summary_headers = [
+            "batch_id",
+            "batch_size",
+            "ok_count",
+            "error_count",
+            "t1_ms_min",
+            "t1_ms_max",
+            "t1_ms_mean",
+            "t2_ms_min",
+            "t2_ms_max",
+            "t2_ms_mean",
+            "t3_ms_min",
+            "t3_ms_max",
+            "t3_ms_mean",
+            "t_match_ms_min",
+            "t_match_ms_max",
+            "t_match_ms_mean",
+            "t_queue_ms_min",
+            "t_queue_ms_max",
+            "t_queue_ms_mean",
+        ]
+        self.summary_batch_id = 0
+        self.summary_buffer: list[dict] = []
+        self.log_path = Path(self.config.orchestrator_log_csv_path)
+        self.summary_path = Path(self.config.orchestrator_summary_csv_path)
+        self._ensure_log_file_exists()
+        self._ensure_summary_file_exists()
         self.robots = self._build_robot_endpoints(config)
         if not self.robots:
             print("[ORCHESTRATOR] Warning: no robot bindings configured; dispatch cannot start")
+
+    def _ensure_log_file_exists(self) -> None:
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        expected_header = ",".join(self.log_headers)
+        if self.log_path.exists() and self.log_path.stat().st_size > 0:
+            try:
+                with self.log_path.open("r", encoding="utf-8") as file:
+                    current_header = file.readline().strip()
+                if current_header == expected_header:
+                    return
+                print(
+                    "[ORCHESTRATOR] Detected outdated orchestrator_logs.csv header; "
+                    "resetting file to t1/t2/t3 format"
+                )
+            except OSError:
+                pass
+        with self.log_path.open("w", newline="", encoding="utf-8") as file:
+            writer = csv.DictWriter(file, fieldnames=self.log_headers)
+            writer.writeheader()
+
+    def _ensure_summary_file_exists(self) -> None:
+        self.summary_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.summary_path.exists() and self.summary_path.stat().st_size > 0:
+            return
+        with self.summary_path.open("w", newline="", encoding="utf-8") as file:
+            writer = csv.DictWriter(file, fieldnames=self.summary_headers)
+            writer.writeheader()
+
+    async def _append_log_row(self, row: dict) -> None:
+        async with self.log_lock:
+            row_to_write = {key: row.get(key, "") for key in self.log_headers}
+            with self.log_path.open("a", newline="", encoding="utf-8") as file:
+                writer = csv.DictWriter(file, fieldnames=self.log_headers)
+                writer.writerow(row_to_write)
+
+    def _safe_float(self, value: object) -> Optional[float]:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    async def _append_summary_row_if_ready(self, row: dict) -> None:
+        async with self.log_lock:
+            batch_size = max(1, self.config.summary_batch_size)
+            t1 = self._safe_float(row.get("t1_ms"))
+            t2 = self._safe_float(row.get("t2_ms"))
+            t3 = self._safe_float(row.get("t3_ms"))
+
+            # Only completed rows with all timestamps contribute to batch statistics.
+            if t1 is None or t2 is None or t3 is None:
+                return
+
+            self.summary_buffer.append(
+                {
+                    "run_id": self._safe_float(row.get("run_id")),
+                    "status": str(row.get("status", "")),
+                    "t1_ms": t1,
+                    "t2_ms": t2,
+                    "t3_ms": t3,
+                    "t_match_ms": t2 - t1,
+                    "t_queue_ms": t3 - t2,
+                }
+            )
+
+            if len(self.summary_buffer) < batch_size:
+                return
+
+            batch = self.summary_buffer[:batch_size]
+            self.summary_buffer = self.summary_buffer[batch_size:]
+            self.summary_batch_id += 1
+
+            ok_count = sum(1 for item in batch if item["status"] == "ok")
+            error_count = len(batch) - ok_count
+
+            def stats(values: list[int]) -> tuple[int, int, float]:
+                return min(values), max(values), float(mean(values))
+
+            t1_min, t1_max, t1_mean = stats([item["t1_ms"] for item in batch])
+            t2_min, t2_max, t2_mean = stats([item["t2_ms"] for item in batch])
+            t3_min, t3_max, t3_mean = stats([item["t3_ms"] for item in batch])
+            tm_min, tm_max, tm_mean = stats([item["t_match_ms"] for item in batch])
+            tq_min, tq_max, tq_mean = stats([item["t_queue_ms"] for item in batch])
+
+            summary_row = {
+                "batch_id": self.summary_batch_id,
+                "batch_size": len(batch),
+                "ok_count": ok_count,
+                "error_count": error_count,
+                "t1_ms_min": t1_min,
+                "t1_ms_max": t1_max,
+                "t1_ms_mean": f"{t1_mean:.3f}",
+                "t2_ms_min": t2_min,
+                "t2_ms_max": t2_max,
+                "t2_ms_mean": f"{t2_mean:.3f}",
+                "t3_ms_min": t3_min,
+                "t3_ms_max": t3_max,
+                "t3_ms_mean": f"{t3_mean:.3f}",
+                "t_match_ms_min": tm_min,
+                "t_match_ms_max": tm_max,
+                "t_match_ms_mean": f"{tm_mean:.3f}",
+                "t_queue_ms_min": tq_min,
+                "t_queue_ms_max": tq_max,
+                "t_queue_ms_mean": f"{tq_mean:.3f}",
+            }
+
+            with self.summary_path.open("a", newline="", encoding="utf-8") as file:
+                writer = csv.DictWriter(file, fieldnames=self.summary_headers)
+                writer.writerow(summary_row)
+
+        print(
+            "[ORCHESTRATOR] Logged summary batch "
+            f"#{self.summary_batch_id} ({len(batch)} runs) to {self.summary_path}"
+        )
+
+    async def _log_and_print(self, row: dict) -> None:
+        await self._append_log_row(row)
+        await self._append_summary_row_if_ready(row)
+        print(
+            "[ORCHESTRATOR] Logged run "
+            f"#{row.get('run_id')} status={row.get('status')} sensor={row.get('sensor')}"
+        )
 
     def _build_robot_endpoints(self, config: AgentConfig) -> list[RobotEndpoints]:
         robots: list[RobotEndpoints] = []
@@ -105,7 +275,7 @@ class FactoryOrchestrator:
         return robots
 
 
-    async def handle_event(self, submodel_b64: str, property_id: str, payload: str) -> None:
+    async def handle_event(self, submodel_b64: str, property_id: str, payload: str, mqtt_topic: str, received_at_ms: int) -> None:
         bool_value = parse_bool_value(payload)
         
         if "Present" not in property_id and "Clear" not in property_id: 
@@ -157,25 +327,60 @@ class FactoryOrchestrator:
                 "conveyor_b64": submodel_b64,
                 "sensor": property_id,
                 "sensor_key": sensor_key,
-                "token": job_token
+                "token": job_token,
+                "mqtt_topic": mqtt_topic,
+                "t1_ms": received_at_ms,
             })
             print(f"[ORCHESTRATOR] Enqueued event: Sensor '{property_id}' triggered on Conveyor '{submodel_b64}'")
 
     async def start_worker(self) -> None:
-        """Sequential loop processing one job at a time, completely eliminating race conditions"""
-        print("[ORCHESTRATOR] Fleet execution loop active.")
+        """Sequential matching stage: resolves robot and operation, then hands off for dispatch."""
+        print("[ORCHESTRATOR] Matchmaking loop active.")
         while True:
             job = await self.job_queue.get()
-            asyncio.create_task(self._run_job_safely(job))
+            await self._run_match_safely(job)
             self.job_queue.task_done()
 
-    async def _run_job_safely(self, job: dict) -> None:
+    async def start_dispatcher(self) -> None:
+        """Sequential dispatch stage: invokes AAS operation and records t3."""
+        print("[ORCHESTRATOR] Dispatch loop active.")
+        while True:
+            dispatch_job = await self.dispatch_queue.get()
+            await self._run_dispatch_safely(dispatch_job)
+            self.dispatch_queue.task_done()
+
+    async def _run_match_safely(self, job: dict) -> None:
         try:
             await self.process_factory_job(job)
         except Exception as e:
-            print(f"[ERROR] Failed to execute factory job: {e}")
+            print(f"[ERROR] Failed to process factory job: {e}")
+            traceback.print_exc()
+            await self._log_and_print(
+                {
+                    "run_id": job.get("run_id"),
+                    "status": "error_match",
+                    "conveyor_submodel_b64": job.get("conveyor_b64"),
+                    "sensor": job.get("sensor"),
+                    "mqtt_topic": job.get("mqtt_topic"),
+                    "t1_ms": job.get("t1_ms"),
+                    "notes": str(e),
+                }
+            )
+            token = job.get("token")
+            if token:
+                self.active_jobs.discard(token)
         finally:
-            self.active_jobs.discard(job["token"])
+            pass
+
+    async def _run_dispatch_safely(self, dispatch_job: dict) -> None:
+        try:
+            await self.dispatch_factory_job(dispatch_job)
+        except Exception as e:
+            print(f"[ERROR] Failed to dispatch operation: {e}")
+        finally:
+            token = dispatch_job.get("token")
+            if token:
+                self.active_jobs.discard(token)
 
     async def _read_is_moving(self, client: httpx.AsyncClient, state_url: str) -> Optional[bool]:
         try:
@@ -213,9 +418,11 @@ class FactoryOrchestrator:
 
         return False
     
-    async def _manage_robot_cooldown(self, client: httpx.AsyncClient, robot: RobotEndpoints, state_url: str) -> None:
+    async def _manage_robot_cooldown(self, robot: RobotEndpoints, state_url: str) -> None:
         """Monitors a specific robot's motion in the background without halting the factory queue"""
-        settled = await self._wait_for_motion_settle(client, state_url)
+        timeout = httpx.Timeout(self.config.http_timeout_seconds)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            settled = await self._wait_for_motion_settle(client, state_url)
         if not settled:
             print(f"[ORCHESTRATOR] Warning: Robot {robot.state_submodel_b64} motion did not settle within timeout.")
         else:
@@ -285,7 +492,6 @@ class FactoryOrchestrator:
                         "but TargetOperation is missing"
                     )
                     continue
-                invoke_url = f"{skills_url}/submodel-elements/{target_op}/invoke"
                 print(
                     "[ORCHESTRATOR] Found matching route for sensor "
                     f"{triggering_sensor} on robot {robot.skills_submodel_b64}, invoking operation {target_op}"
@@ -318,18 +524,71 @@ class FactoryOrchestrator:
                         f"[ORCHESTRATOR] Sensor '{triggering_sensor}' latched until it clears (false) before next move"
                     )
 
-                # 5. Dispatch the Skill Execution
+                t2_ms = int(time.time() * 1000)
+                dispatch_payload = {
+                    "run_id": job.get("run_id"),
+                    "token": job.get("token"),
+                    "conveyor_b64": job.get("conveyor_b64"),
+                    "sensor": triggering_sensor,
+                    "mqtt_topic": job.get("mqtt_topic"),
+                    "t1_ms": job.get("t1_ms"),
+                    "t2_ms": t2_ms,
+                    "robot_state_submodel_b64": robot.state_submodel_b64,
+                    "robot_skills_submodel_b64": robot.skills_submodel_b64,
+                    "target_operation": target_op,
+                    "invoke_url": f"{skills_url}/submodel-elements/{target_op}/invoke",
+                    "body": body,
+                }
+                await self.dispatch_queue.put(dispatch_payload)
                 print(
-                    f"[ORCHESTRATOR] Dispatching skill '{target_op}' "
-                    f"to robot skills submodel ({robot.skills_submodel_b64}) for sensor {triggering_sensor}"
+                    f"[ORCHESTRATOR] Match completed for run #{job.get('run_id')}; "
+                    f"queued for dispatch (sensor={triggering_sensor}, robot={robot.skills_submodel_b64})"
                 )
-                response = await client.post(invoke_url, json=body)
-                print(f"[ORCHESTRATOR] Response status from robot: {response.status_code}")
-
-                asyncio.create_task(self._manage_robot_cooldown(client, robot, state_url))
-                return # Match completed successfully! Stop looking at other robots.
+                return
             
             print(f"[ORCHESTRATOR] Resource Warning: No available robots can currently service sensor {triggering_sensor}")
+            self.active_jobs.discard(job["token"])
+
+    async def dispatch_factory_job(self, dispatch_job: dict) -> None:
+        timeout = httpx.Timeout(self.config.http_timeout_seconds)
+        t3_ms = int(time.time() * 1000)
+
+        print(
+            f"[ORCHESTRATOR] Dispatching run #{dispatch_job.get('run_id')} "
+            f"skill '{dispatch_job.get('target_operation')}' to robot {dispatch_job.get('robot_skills_submodel_b64')}"
+        )
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(dispatch_job["invoke_url"], json=dispatch_job["body"])
+            print(f"[ORCHESTRATOR] Response status from robot: {response.status_code}")
+
+            t1_ms = dispatch_job.get("t1_ms")
+            t2_ms = dispatch_job.get("t2_ms")
+
+            await self._log_and_print(
+                {
+                    "run_id": dispatch_job.get("run_id"),
+                    "status": "ok" if response.status_code < 400 else "invoke_http_error",
+                    "conveyor_submodel_b64": dispatch_job.get("conveyor_b64"),
+                    "sensor": dispatch_job.get("sensor"),
+                    "matched_robot_state_submodel_b64": dispatch_job.get("robot_state_submodel_b64"),
+                    "matched_robot_skills_submodel_b64": dispatch_job.get("robot_skills_submodel_b64"),
+                    "target_operation": dispatch_job.get("target_operation"),
+                    "http_status": response.status_code,
+                    "mqtt_topic": dispatch_job.get("mqtt_topic"),
+                    "t1_ms": t1_ms,
+                    "t2_ms": t2_ms,
+                    "t3_ms": t3_ms,
+                    "notes": "Raw timestamps only; compute latency terms offline",
+                }
+            )
+
+            if response.status_code < 400:
+                state_url = f"{self.config.basyx_base_url}/submodels/{dispatch_job.get('robot_state_submodel_b64')}"
+                robot = RobotEndpoints(
+                    state_submodel_b64=dispatch_job.get("robot_state_submodel_b64"),
+                    skills_submodel_b64=dispatch_job.get("robot_skills_submodel_b64"),
+                )
+                asyncio.create_task(self._manage_robot_cooldown(robot, state_url))
 
 
 def parse_topic(topic: str) -> Optional[tuple[str, str]]:
@@ -353,6 +612,7 @@ def parse_topic(topic: str) -> Optional[tuple[str, str]]:
 async def run_agent(config: AgentConfig) -> None:
     orchestrator = FactoryOrchestrator(config)
     asyncio.create_task(orchestrator.start_worker())
+    asyncio.create_task(orchestrator.start_dispatcher())
 
     while True:
         try:
@@ -368,8 +628,15 @@ async def run_agent(config: AgentConfig) -> None:
                     if parsed is not None:
                         submodel_b64, property_id = parsed
                         payload = message.payload.decode(errors="replace")
+                        received_at_ms = int(time.time() * 1000)
                         # Pass events to the event tracker safely
-                        await orchestrator.handle_event(submodel_b64, property_id, payload)
+                        await orchestrator.handle_event(
+                            submodel_b64,
+                            property_id,
+                            payload,
+                            str(message.topic),
+                            received_at_ms,
+                        )
 
         except MqttError as exc:
             print(f"[AGENT] MQTT connection error: {exc}. Reconnecting in 3s...")
