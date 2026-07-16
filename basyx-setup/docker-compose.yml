@@ -92,8 +92,8 @@ services:
       - BRIDGE_MQTT_BROKER_URL=tcp://mosquitto:1883
       - BRIDGE_MQTT_TOPIC_FILTER=oip/command/conveyorbelt/+
       - BRIDGE_MQTT_REPLY_TOPIC_PREFIX=oip/reply/conveyorbelt
-      - BRIDGE_INVOKE_CONVEYOR_RUNNING_URL=http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vMzEyMV8xMTQyXzYwNjJfMzY3NQ/submodel-elements/Running/invoke
-      - BRIDGE_INVOKE_CONVEYOR_SPEED_URL=http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vMzEyMV8xMTQyXzYwNjJfMzY3NQ/submodel-elements/Speed/invoke
+      - BRIDGE_INVOKE_CONVEYOR_RUNNING_URL=http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vMzEyMV8xMTQyXzYwNjJfMzY3NS9jb252ZXlvcjAx/submodel-elements/Running/invoke
+      - BRIDGE_INVOKE_CONVEYOR_SPEED_URL=http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vMzEyMV8xMTQyXzYwNjJfMzY3NS9jb252ZXlvcjAx/submodel-elements/Speed/invoke
     ports:
       - '8091:8091'
     restart: always
@@ -182,8 +182,8 @@ services:
       - ROBOT_STATUS_POLL_SECONDS=0.4
       - ROBOT_MOTION_START_GRACE_SECONDS=5.0
       - SENSOR_TRUE_REARM_SECONDS=2.0
-      - REGISTERED_ROBOTS=aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Nw
-      - ROBOT_SUBMODEL_BINDINGS=aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTExNV85MDgxXzYwNjJfMTg2NQ|aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Nw
+      - REGISTERED_ROBOTS=aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Ny9yb2JvdDAx
+      - ROBOT_SUBMODEL_BINDINGS=aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTExNV85MDgxXzYwNjJfMTg2NS9yb2JvdDAx|aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Ny9yb2JvdDAx
       - ORCHESTRATOR_LOG_CSV_PATH=/app/orchestrator_logs.csv
       - ORCHESTRATOR_SUMMARY_CSV_PATH=/app/orchestrator_summary.csv
       - SUMMARY_BATCH_SIZE=5
