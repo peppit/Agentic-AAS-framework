@@ -2,24 +2,34 @@ server:
   port: 8091
 
 bridge:
+  aas:
+    base-url: http://aas-env:8081
+  station:
+    bindings: ""
+    bindings-file: ""
   mqtt:
     broker-url: tcp://mosquitto:1883
     client-id: mqtt-operation-bridge
-    topic-filter: oip/simulation/conveyorbelt/+
+    topic-filter: oip/command/+/+
+    command-prefix: oip/command
     qos: 1
-    reply-topic-prefix: oip/reply/conveyorbelt
+    reply-topic-prefix: oip/reply
   invoke:
     timeout-ms: 8000
     conveyor:
-      running-url: http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vMzEyMV8xMTQyXzYwNjJfMzY3NQ/submodel-elements/Running/invoke
+      running-url: ""
       running-idshort: running
-      speed-url: http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vMzEyMV8xMTQyXzYwNjJfMzY3NQ/submodel-elements/Speed/invoke
+      running-operation-idshort: Running
+      speed-url: ""
       speed-idshort: speed
+      speed-operation-idshort: Speed
     robot:
-      move-box-url: http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Nw/submodel-elements/MoveBox/invoke
+      move-box-url: ""
       move-box-idshort: moveBox
-      move-to-home-url: http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Nw/submodel-elements/MoveToHome/invoke
+      move-box-operation-idshort: MoveBox
+      move-to-home-url: ""
       move-to-home-idshort: moveToHome
+      move-to-home-operation-idshort: MoveToHome
 
 logging:
   level:

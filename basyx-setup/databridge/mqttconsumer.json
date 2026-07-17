@@ -22,6 +22,30 @@
     "serverUrl": "mosquitto",
     "serverPort": 1883,
     "topic": "simulation/Station_01/isMoving"
+  },
+  {
+    "uniqueId": "conveyorbelt-running-source-02",
+    "serverUrl": "mosquitto",
+    "serverPort": 1883,
+    "topic": "simulation/Station_02/isRunning"
+  },
+  {
+    "uniqueId": "conveyorbelt-speed-source-02",
+    "serverUrl": "mosquitto",
+    "serverPort": 1883,
+    "topic": "simulation/Station_02/currentSpeed"
+  },
+  {
+    "uniqueId": "conveyorbelt-sensor-source-02",
+    "serverUrl": "mosquitto",
+    "serverPort": 1883,
+    "topic": "simulation/Station_02/boxDetected"
+  },
+  {
+    "uniqueId": "robot-isMoving-source-02",
+    "serverUrl": "mosquitto",
+    "serverPort": 1883,
+    "topic": "simulation/Station_02/isMoving"
   }
 ]
 

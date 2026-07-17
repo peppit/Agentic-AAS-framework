@@ -22,5 +22,29 @@
     "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTExNV85MDgxXzYwNjJfMTg2NS9yb2JvdDAx",
     "idShortPath": "IsMoving",
     "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "ConveyorBelt_Running_02",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTI5M18yMTQyXzYwNjJfOTE0OC9zdGF0aW9uMDIvY29udmV5b3IwMQ",
+    "idShortPath": "IsRunning",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "ConveyorBelt_CurrentSpeed_02",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTI5M18yMTQyXzYwNjJfOTE0OC9zdGF0aW9uMDIvY29udmV5b3IwMQ",
+    "idShortPath": "CurrentSpeed",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "ConveyorBelt_Sensor_02",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTI5M18yMTQyXzYwNjJfOTE0OC9zdGF0aW9uMDIvY29udmV5b3IwMQ",
+    "idShortPath": "Sensor_BoxPresent",
+    "api": "DotAAS-V3"
+  },
+  {
+    "uniqueId": "Robot_IsMoving_02",
+    "submodelEndpoint": "http://aas-env:8081/submodels/aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTExNV85MDgxXzYwNjJfMTg2NS9yb2JvdDAy",
+    "idShortPath": "IsMoving",
+    "api": "DotAAS-V3"
   }
 ]

@@ -24,16 +24,11 @@ class AgentConfig:
     robot_status_poll_seconds: float = float(os.getenv("ROBOT_STATUS_POLL_SECONDS", "0.4"))
     robot_motion_start_grace_seconds: float = float(os.getenv("ROBOT_MOTION_START_GRACE_SECONDS", "5.0"))
     sensor_true_rearm_seconds: float = float(os.getenv("SENSOR_TRUE_REARM_SECONDS", "2.0"))
+    robot_bindings_file: str = os.getenv("ROBOT_BINDINGS_FILE", "")
     register_robots: str = os.getenv("REGISTERED_ROBOTS", "")
     robot_submodel_bindings: str = os.getenv("ROBOT_SUBMODEL_BINDINGS", "")
-    orchestrator_log_csv_path: str = os.getenv(
-        "ORCHESTRATOR_LOG_CSV_PATH",
-        str(Path(__file__).resolve().parent / "orchestrator_logs.csv"),
-    )
-    orchestrator_summary_csv_path: str = os.getenv(
-        "ORCHESTRATOR_SUMMARY_CSV_PATH",
-        str(Path(__file__).resolve().parent / "orchestrator_summary.csv"),
-    )
+    orchestrator_log_csv_path: str = os.getenv("ORCHESTRATOR_LOG_CSV_PATH", str(Path(__file__).resolve().parent / "orchestrator_logs.csv"))
+    orchestrator_summary_csv_path: str = os.getenv("ORCHESTRATOR_SUMMARY_CSV_PATH", str(Path(__file__).resolve().parent / "orchestrator_summary.csv"))
     summary_batch_size: int = int(os.getenv("SUMMARY_BATCH_SIZE", "5"))
 
 
@@ -44,30 +39,22 @@ class RobotEndpoints:
 
 
 def normalize_submodel_id(submodel_id: str) -> str:
-    # BaSyx submodel identifiers in URLs are URL-safe base64 without padding
     return submodel_id.strip().replace("+", "-").replace("/", "_").rstrip("=")
 
 
 def parse_bool_value(raw_payload: str) -> Optional[bool]:
     text = raw_payload.strip().lower()
-    if text in {"true", "1", "on", "yes"}:
-        return True
-    if text in {"false", "0", "off", "no"}:
-        return False
+    if text in {"true", "1", "on", "yes"}: return True
+    if text in {"false", "0", "off", "no"}: return False
 
     try:
         parsed = json.loads(text)
-        if isinstance(parsed, bool):
-            return parsed
-        if isinstance(parsed, (int, float)):
-            return bool(parsed)
+        if isinstance(parsed, bool): return parsed
+        if isinstance(parsed, (int, float)): return bool(parsed)
         if isinstance(parsed, dict):
             for key in ("value", "newValue", "payload"):
-                if key in parsed:
-                    val = parsed[key]
-                    if isinstance(val, bool):
-                        return val
-                    return parse_bool_value(str(val))
+                if key in parsed and (val := parse_bool_value(str(parsed[key]))) is not None:
+                    return val
     except json.JSONDecodeError:
         pass
     return None
@@ -113,46 +100,30 @@ class FactoryOrchestrator:
         self.summary_buffer: list[dict] = []
         self.log_path = Path(self.config.orchestrator_log_csv_path)
         self.summary_path = Path(self.config.orchestrator_summary_csv_path)
-        self._ensure_log_file_exists()
-        self._ensure_summary_file_exists()
+        self._ensure_csv_file(self.log_path, self.log_headers, check_headers=True)
+        self._ensure_csv_file(self.summary_path, self.summary_headers)
         self.robots = self._build_robot_endpoints(config)
         if not self.robots:
             print("[ORCHESTRATOR] Warning: no robot bindings configured; dispatch cannot start")
 
-    def _ensure_log_file_exists(self) -> None:
-        self.log_path.parent.mkdir(parents=True, exist_ok=True)
-        expected_header = ",".join(self.log_headers)
-        if self.log_path.exists() and self.log_path.stat().st_size > 0:
+    def _ensure_csv_file(self, path: Path, headers: list[str], check_headers: bool = False) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.stat().st_size > 0:
+            if not check_headers: return
             try:
-                with self.log_path.open("r", encoding="utf-8") as file:
-                    current_header = file.readline().strip()
-                if current_header == expected_header:
-                    return
-                print(
-                    "[ORCHESTRATOR] Detected outdated orchestrator_logs.csv header; "
-                    "resetting file to t1/t2/t3 format"
-                )
+                with path.open("r", encoding="utf-8") as f:
+                    if f.readline().strip() == ",".join(headers): return
+                print(f"[ORCHESTRATOR] Resetting outdated header in {path.name}")
             except OSError:
                 pass
-        with self.log_path.open("w", newline="", encoding="utf-8") as file:
-            writer = csv.DictWriter(file, fieldnames=self.log_headers)
-            writer.writeheader()
-
-    def _ensure_summary_file_exists(self) -> None:
-        self.summary_path.parent.mkdir(parents=True, exist_ok=True)
-        if self.summary_path.exists() and self.summary_path.stat().st_size > 0:
-            return
-        with self.summary_path.open("w", newline="", encoding="utf-8") as file:
-            writer = csv.DictWriter(file, fieldnames=self.summary_headers)
-            writer.writeheader()
+        with path.open("w", newline="", encoding="utf-8") as f:
+            csv.DictWriter(f, fieldnames=headers).writeheader()
 
     async def _append_log_row(self, row: dict) -> None:
         async with self.log_lock:
-            row_to_write = {key: row.get(key, "") for key in self.log_headers}
-            with self.log_path.open("a", newline="", encoding="utf-8") as file:
-                writer = csv.DictWriter(file, fieldnames=self.log_headers)
-                writer.writerow(row_to_write)
-
+            with self.log_path.open("a", newline="", encoding="utf-8") as f:
+                csv.DictWriter(f, fieldnames=self.log_headers).writerow({k: row.get(k, "") for k in self.log_headers})
+    
     def _safe_float(self, value: object) -> Optional[float]:
         if value is None:
             return None
@@ -168,7 +139,6 @@ class FactoryOrchestrator:
             t2 = self._safe_float(row.get("t2_ms"))
             t3 = self._safe_float(row.get("t3_ms"))
 
-            # Only completed rows with all timestamps contribute to batch statistics.
             if t1 is None or t2 is None or t3 is None:
                 return
 
@@ -229,21 +199,20 @@ class FactoryOrchestrator:
                 writer = csv.DictWriter(file, fieldnames=self.summary_headers)
                 writer.writerow(summary_row)
 
-        print(
-            "[ORCHESTRATOR] Logged summary batch "
-            f"#{self.summary_batch_id} ({len(batch)} runs) to {self.summary_path}"
-        )
+        print(f"[ORCHESTRATOR] Logged summary batch #{self.summary_batch_id} to {self.summary_path}")
 
     async def _log_and_print(self, row: dict) -> None:
         await self._append_log_row(row)
         await self._append_summary_row_if_ready(row)
-        print(
-            "[ORCHESTRATOR] Logged run "
-            f"#{row.get('run_id')} status={row.get('status')} sensor={row.get('sensor')}"
-        )
+        print(f"[ORCHESTRATOR] Logged run #{row.get('run_id')} status={row.get('status')} sensor={row.get('sensor')}")
 
     def _build_robot_endpoints(self, config: AgentConfig) -> list[RobotEndpoints]:
         robots: list[RobotEndpoints] = []
+
+        # Preferred source: file-based bindings for scalable multi-robot setups.
+        robots.extend(self._load_robot_bindings_from_file(config.robot_bindings_file))
+        if robots:
+            return robots
 
         # Preferred format per robot: stateSubmodelId|skillsSubmodelId
         for chunk in config.robot_submodel_bindings.split(","):
@@ -251,14 +220,7 @@ class FactoryOrchestrator:
             if not raw:
                 continue
 
-            if "|" in raw:
-                state_raw, skills_raw = raw.split("|", 1)
-                state_id = normalize_submodel_id(state_raw)
-                skills_id = normalize_submodel_id(skills_raw)
-            else:
-                # Backward-compatible form where one submodel hosts both state and skills.
-                state_id = normalize_submodel_id(raw)
-                skills_id = state_id
+            state_id, skills_id = self._parse_robot_binding(raw)
 
             if state_id and skills_id:
                 robots.append(RobotEndpoints(state_submodel_b64=state_id, skills_submodel_b64=skills_id))
@@ -274,14 +236,74 @@ class FactoryOrchestrator:
 
         return robots
 
+    def _load_robot_bindings_from_file(self, file_path: str) -> list[RobotEndpoints]:
+        if not file_path:
+            return []
+
+        path = Path(file_path)
+        if not path.exists():
+            print(f"[ORCHESTRATOR] Robot bindings file not found: {path}")
+            return []
+
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"[ORCHESTRATOR] Failed to read robot bindings file '{path}': {exc}")
+            return []
+
+        robots: list[RobotEndpoints] = []
+
+        # Accept either list entries or map entries.
+        if isinstance(data, list):
+            entries = data
+        elif isinstance(data, dict):
+            entries = list(data.values())
+        else:
+            print(f"[ORCHESTRATOR] Robot bindings file has unsupported shape: {type(data).__name__}")
+            return []
+
+        for entry in entries:
+            state_id: Optional[str] = None
+            skills_id: Optional[str] = None
+
+            if isinstance(entry, str):
+                state_id, skills_id = self._parse_robot_binding(entry)
+            elif isinstance(entry, dict):
+                state_raw = str(entry.get("stateSubmodelB64", "")).strip()
+                skills_raw = str(entry.get("skillsSubmodelB64", "")).strip()
+                if not state_raw and "binding" in entry:
+                    state_id, skills_id = self._parse_robot_binding(str(entry.get("binding", "")))
+                else:
+                    state_id = normalize_submodel_id(state_raw)
+                    skills_id = normalize_submodel_id(skills_raw if skills_raw else state_raw)
+
+            if state_id and skills_id:
+                robots.append(RobotEndpoints(state_submodel_b64=state_id, skills_submodel_b64=skills_id))
+
+        print(f"[ORCHESTRATOR] Loaded {len(robots)} robot binding(s) from {path}")
+        return robots
+
+    def _parse_robot_binding(self, raw: str) -> tuple[str, str]:
+        if not (value:= raw.strip()):
+            return "", ""
+
+        if "|" in value:
+            state_raw, skills_raw = value.split("|", 1)
+            state_id = normalize_submodel_id(state_raw)
+            skills_id = normalize_submodel_id(skills_raw)
+            return state_id, skills_id
+
+        # Backward-compatible form where one submodel hosts both state and skills.
+        normalized = normalize_submodel_id(value)
+        return normalized, normalized
+
 
     async def handle_event(self, submodel_b64: str, property_id: str, payload: str, mqtt_topic: str, received_at_ms: int) -> None:
-        bool_value = parse_bool_value(payload)
         
         if "Present" not in property_id and "Clear" not in property_id: 
             return
 
-        if bool_value is None:
+        if (bool_value:=parse_bool_value(payload)) is None:
             print(
                 f"[ORCHESTRATOR] Ignored sensor event {property_id}: "
                 f"payload did not resolve to boolean ({payload})"
@@ -295,9 +317,7 @@ class FactoryOrchestrator:
         if bool_value is False:
             if self.sensor_waiting_for_clear.get(sensor_key):
                 self.sensor_waiting_for_clear[sensor_key] = False
-                print(
-                    f"[ORCHESTRATOR] Sensor '{property_id}' on Conveyor '{submodel_b64}' cleared; ready for next box detection"
-                )
+                print(f"[ORCHESTRATOR] Sensor '{property_id}' on Conveyor '{submodel_b64}' cleared; ready for next box detection")
             return
 
         # After dispatching one move for this sensor, require an explicit clear (false)
@@ -334,53 +354,36 @@ class FactoryOrchestrator:
             print(f"[ORCHESTRATOR] Enqueued event: Sensor '{property_id}' triggered on Conveyor '{submodel_b64}'")
 
     async def start_worker(self) -> None:
-        """Sequential matching stage: resolves robot and operation, then hands off for dispatch."""
-        print("[ORCHESTRATOR] Matchmaking loop active.")
         while True:
             job = await self.job_queue.get()
-            await self._run_match_safely(job)
+            try:
+                await self.process_factory_job(job)
+            except Exception as e:
+                traceback.print_exc()
+                await self._log_and_print(
+                    {
+                        "run_id": job.get("run_id"), 
+                        "status": "error_match", 
+                        "conveyor_submodel_b64": job.get("conveyor_b64"), 
+                        "sensor": job.get("sensor"), 
+                        "mqtt_topic": job.get("mqtt_topic"), 
+                        "t1_ms": job.get("t1_ms"), 
+                        "notes": str(e)
+                    }
+                )
+                if token := job.get("token"): self.active_jobs.discard(token)
             self.job_queue.task_done()
 
     async def start_dispatcher(self) -> None:
-        """Sequential dispatch stage: invokes AAS operation and records t3."""
-        print("[ORCHESTRATOR] Dispatch loop active.")
         while True:
             dispatch_job = await self.dispatch_queue.get()
-            await self._run_dispatch_safely(dispatch_job)
+            try:
+                await self.dispatch_factory_job(dispatch_job)
+            except Exception as e:
+                print(f"[ERROR] Dispatch failed: {e}")
+            finally:
+                if token := dispatch_job.get("token"): self.active_jobs.discard(token)
             self.dispatch_queue.task_done()
-
-    async def _run_match_safely(self, job: dict) -> None:
-        try:
-            await self.process_factory_job(job)
-        except Exception as e:
-            print(f"[ERROR] Failed to process factory job: {e}")
-            traceback.print_exc()
-            await self._log_and_print(
-                {
-                    "run_id": job.get("run_id"),
-                    "status": "error_match",
-                    "conveyor_submodel_b64": job.get("conveyor_b64"),
-                    "sensor": job.get("sensor"),
-                    "mqtt_topic": job.get("mqtt_topic"),
-                    "t1_ms": job.get("t1_ms"),
-                    "notes": str(e),
-                }
-            )
-            token = job.get("token")
-            if token:
-                self.active_jobs.discard(token)
-        finally:
-            pass
-
-    async def _run_dispatch_safely(self, dispatch_job: dict) -> None:
-        try:
-            await self.dispatch_factory_job(dispatch_job)
-        except Exception as e:
-            print(f"[ERROR] Failed to dispatch operation: {e}")
-        finally:
-            token = dispatch_job.get("token")
-            if token:
-                self.active_jobs.discard(token)
 
     async def _read_is_moving(self, client: httpx.AsyncClient, state_url: str) -> Optional[bool]:
         try:
@@ -409,7 +412,6 @@ class FactoryOrchestrator:
                 if saw_moving and consecutive_not_moving >= 2:
                     return True
 
-                # Fallback success: some stacks never toggle IsMoving reliably.
                 # After a grace period, repeated false readings indicate robot is idle.
                 if (not saw_moving and asyncio.get_running_loop().time() >= grace_until and consecutive_not_moving >= 3):
                     return True
@@ -592,21 +594,10 @@ class FactoryOrchestrator:
 
 
 def parse_topic(topic: str) -> Optional[tuple[str, str]]:
-    parts = topic.split("/")
-    if len(parts) < 7:
-        print(f"[AGENT] Ignoring topic with insufficient parts0: {topic}")
-        return None
-    if parts[0] != "sm-repository" or parts[2] != "submodels":
-        print(f"[AGENT] Ignoring topic with unexpected structure1: {topic}")
-        return None
-    if parts[4] != "submodelElements" or parts[6] != "updated":
-        print(f"[AGENT] Ignoring topic with unexpected structure2: {topic}")
-        return None
-    
-    # parts[3] is the submodelIdBase64URLEncoded
-    # parts[5] is the property idShortPath
-    print(f"[AGENT] Parsed topic: submodelId={parts[3]}, propertyId={parts[5]}")
-    return parts[3], parts[5]
+    p = topic.split("/")
+    if len(p) >= 7 and p[0] == "sm-repository" and p[2] == "submodels" and p[4] == "submodelElements" and p[6] == "updated":
+        return p[3], p[5]
+    return None
 
 
 async def run_agent(config: AgentConfig) -> None:

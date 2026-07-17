@@ -26,5 +26,33 @@
     "transformers": ["jsonataExtractIsMoving"],
     "datasinks": ["Robot_IsMoving"],
     "trigger": "event"
+  },
+  {
+    "routeId": "conveyor-belt-running-02",
+    "datasource": "conveyorbelt-running-source-02",
+    "transformers": ["jsonataExtractIsRunning"],
+    "datasinks": ["ConveyorBelt_Running_02"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "conveyor-belt-current-speed-02",
+    "datasource": "conveyorbelt-speed-source-02",
+    "transformers": ["jsonataExtractCurrentSpeed"],
+    "datasinks": ["ConveyorBelt_CurrentSpeed_02"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "conveyor-belt-sensor-02",
+    "datasource": "conveyorbelt-sensor-source-02",
+    "transformers": ["jsonataExtractBoxDetected"],
+    "datasinks": ["ConveyorBelt_Sensor_02"],
+    "trigger": "event"
+  },
+  {
+    "routeId": "robot-isMoving-02",
+    "datasource": "robot-isMoving-source-02",
+    "transformers": ["jsonataExtractIsMoving"],
+    "datasinks": ["Robot_IsMoving_02"],
+    "trigger": "event"
   }
 ]

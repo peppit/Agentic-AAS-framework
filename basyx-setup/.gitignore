@@ -14,3 +14,16 @@ target/
 .classpath
 .project
 .settings/
+
+# Runtime logs
+*.log
+*.out
+*.err
+
+# Generated runtime CSV logs
+../orchestrator_logs.csv
+../orchestrator_summary.csv
+python-agent/orchestrator_logs.csv
+python-agent/orchestrator_summary.csv
+OIP_server_logs.csv
+../OIP_server_logs.csv

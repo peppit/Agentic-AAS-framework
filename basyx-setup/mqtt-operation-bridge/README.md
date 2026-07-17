@@ -3,13 +3,21 @@
 This service subscribes to MQTT command topics and invokes BaSyx operation endpoints over HTTP.
 
 Current scope:
-- Conveyor operation `Running`
-- Conveyor operation `SetSpeed`
+- Conveyor operations `Running`, `Speed`
+- Robot operations `MoveBox`, `MoveToHome`
 
 ## Command Topics
 
-- `oip/command/conveyorbelt/running`
-- `oip/command/conveyorbelt/speed`
+Preferred dynamic pattern:
+
+- `oip/command/{stationId}/{action}`
+
+Examples:
+
+- `oip/command/station_01/running`
+- `oip/command/station_01/speed`
+- `oip/command/station_01/moveBox`
+- `oip/command/station_01/moveToHome`
 
 ## Accepted Payloads
 
@@ -32,8 +40,8 @@ Also accepted: `55.0`.
 ## Reply Topics
 
 Replies are published to:
-- `oip/reply/conveyorbelt/running`
-- `oip/reply/conveyorbelt/speed`
+
+- `oip/reply/{stationId}/{operation}`
 
 Reply payload example:
 
@@ -46,20 +54,45 @@ Reply payload example:
 }
 ```
 
-## Required Configuration
+## Dynamic Routing Configuration
 
-Set operation invoke URLs to your real submodel and operation idShort paths.
+Use station bindings so the bridge can construct invoke URLs dynamically at runtime.
 
 Environment variables:
 
-- `BRIDGE_INVOKE_CONVEYOR_RUNNING_URL`
-- `BRIDGE_INVOKE_CONVEYOR_SPEED_URL`
+- `BRIDGE_MQTT_TOPIC_FILTER=oip/command/+/+`
+- `BRIDGE_MQTT_COMMAND_PREFIX=oip/command`
+- `BRIDGE_AAS_BASE_URL=http://aas-env:8081`
+- `BRIDGE_STATION_BINDINGS_FILE=/config/stations.json` (recommended)
+- `BRIDGE_STATION_BINDINGS=station_01=<conveyorSubmodelB64>|<robotSubmodelB64>,station_02=<conveyorSubmodelB64>|<robotSubmodelB64>` (optional inline fallback)
 
-Example URL format:
+Recommended `stations.json` shape:
+
+```json
+{
+  "station_01": {
+    "conveyorSubmodelB64": "<conveyorSubmodelB64>",
+    "robotSubmodelB64": "<robotSubmodelB64>"
+  },
+  "station_02": {
+    "conveyorSubmodelB64": "<conveyorSubmodelB64>",
+    "robotSubmodelB64": "<robotSubmodelB64>"
+  }
+}
+```
+
+Runtime invoke URL pattern:
 
 ```text
-http://aas-env:8081/submodels/<base64url-submodel-id>/submodel-elements/<OperationIdShortPath>/invoke
+{BRIDGE_AAS_BASE_URL}/submodels/{submodelB64}/submodel-elements/{OperationIdShortPath}/invoke
 ```
+
+If a station binding is missing, the bridge falls back to static URLs (if provided):
+
+- `BRIDGE_INVOKE_CONVEYOR_RUNNING_URL`
+- `BRIDGE_INVOKE_CONVEYOR_SPEED_URL`
+- `BRIDGE_INVOKE_ROBOT_MOVE_BOX_URL`
+- `BRIDGE_INVOKE_ROBOT_MOVE_TO_HOME_URL`
 
 ## Run with Docker Compose
 

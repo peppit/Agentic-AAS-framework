@@ -24,7 +24,12 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
 
 @Service
 public class MqttCommandBridgeService implements MqttCallback {
@@ -46,6 +51,18 @@ public class MqttCommandBridgeService implements MqttCallback {
     @Value("${bridge.mqtt.reply-topic-prefix:}")
     private String replyTopicPrefix;
 
+    @Value("${bridge.mqtt.command-prefix:oip/command}")
+    private String commandPrefix;
+
+    @Value("${bridge.aas.base-url:http://aas-env:8081}")
+    private String aasBaseUrl;
+
+    @Value("${bridge.station.bindings:}")
+    private String stationBindingsRaw;
+
+    @Value("${bridge.station.bindings-file:}")
+    private String stationBindingsFile;
+
     @Value("${bridge.invoke.timeout-ms:8000}")
     private long timeoutMs;
 
@@ -55,11 +72,17 @@ public class MqttCommandBridgeService implements MqttCallback {
     @Value("${bridge.invoke.conveyor.running-idshort:running}")
     private String runningIdShort;
 
+    @Value("${bridge.invoke.conveyor.running-operation-idshort:Running}")
+    private String runningOperationIdShort;
+
     @Value("${bridge.invoke.conveyor.speed-url:}")
     private String speedInvokeUrl;
 
     @Value("${bridge.invoke.conveyor.speed-idshort:speed}")
     private String speedIdShort;
+
+    @Value("${bridge.invoke.conveyor.speed-operation-idshort:Speed}")
+    private String speedOperationIdShort;
 
     @Value("${bridge.invoke.robot.move-box-url:}")
     private String moveBoxInvokeUrl;
@@ -67,19 +90,28 @@ public class MqttCommandBridgeService implements MqttCallback {
     @Value("${bridge.invoke.robot.move-box-idshort:moveBox}")
     private String moveBoxIdShort;
 
+    @Value("${bridge.invoke.robot.move-box-operation-idshort:MoveBox}")
+    private String moveBoxOperationIdShort;
+
     @Value("${bridge.invoke.robot.move-to-home-url:}")
     private String moveToHomeInvokeUrl;
 
     @Value("${bridge.invoke.robot.move-to-home-idshort:moveToHome}")
     private String moveToHomeIdShort;
 
+    @Value("${bridge.invoke.robot.move-to-home-operation-idshort:MoveToHome}")
+    private String moveToHomeOperationIdShort;
+
     private final ObjectMapper mapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newBuilder().build();
+    private final Map<String, StationBinding> stationBindings = new HashMap<>();
 
     private MqttClient mqttClient;
 
     @PostConstruct
     public void start() throws MqttException {
+        loadStationBindings();
+
         MqttConnectOptions options = new MqttConnectOptions();
         options.setAutomaticReconnect(true);
         options.setCleanSession(true);
@@ -119,36 +151,40 @@ public class MqttCommandBridgeService implements MqttCallback {
         String payload = new String(message.getPayload(), StandardCharsets.UTF_8).trim();
         logger.info("Received MQTT command on {} payload={}", topic, payload);
 
-        if (topic.endsWith("/running")) {
-            handleRunning(topic, payload);
+        TopicRoute route = parseTopicRoute(topic);
+        if (route == null) {
+            logger.warn("Ignoring topic that does not match command-prefix '{}': {}", commandPrefix, topic);
             return;
         }
 
-        if (topic.endsWith("/speed")) {
-            handleSpeed(topic, payload);
-            return;
+        switch (route.action) {
+            case "running":
+            case "run":
+                handleRunning(route, payload);
+                return;
+            case "speed":
+            case "setspeed":
+                handleSpeed(route, payload);
+                return;
+            case "movebox":
+                handleMoveBox(route, payload);
+                return;
+            case "movetohome":
+                handleMoveToHome(route, payload);
+                return;
+            default:
+                logger.warn("Ignoring unsupported action '{}' for station '{}' on topic {}", route.action, route.stationId, topic);
         }
-
-        if (topic.endsWith("/moveBox")) {
-            handleMoveBox(topic, payload);
-            return;
-        }
-
-        if (topic.endsWith("/moveToHome")) {
-            handleMoveToHome(topic, payload);
-            return;
-        }
-
-        logger.warn("Ignoring unsupported topic {}", topic);
     }
 
     @Override
     public void deliveryComplete(IMqttDeliveryToken token) {
     }
 
-    private void handleRunning(String topic, String payload) {
-        if (runningInvokeUrl == null || runningInvokeUrl.isBlank()) {
-            logger.warn("running-url is empty; skipping running command");
+    private void handleRunning(TopicRoute route, String payload) {
+        String invokeUrl = resolveInvokeUrl(route.stationId, "conveyor", runningOperationIdShort, runningInvokeUrl);
+        if (invokeUrl == null || invokeUrl.isBlank()) {
+            logger.warn("No running invoke URL resolved for station '{}'", route.stationId);
             return;
         }
 
@@ -158,23 +194,24 @@ public class MqttCommandBridgeService implements MqttCallback {
             value = parseBooleanValue(payload, "running");
         } catch (Exception e) {
             logger.error("Invalid running command payload", e);
-            publishReply("running", requestId, false, e.getMessage());
+            publishReply(route.stationId, "running", requestId, false, e.getMessage());
             return;
         }
 
         try {
-            HttpResponse<String> response = invokeOperation(runningInvokeUrl, runningIdShort, "xs:boolean", String.valueOf(value));
+            HttpResponse<String> response = invokeOperation(invokeUrl, runningIdShort, "xs:boolean", String.valueOf(value));
             boolean success = response.statusCode() >= 200 && response.statusCode() < 300;
-            publishReply("running", requestId, success, response.body());
+            publishReply(route.stationId, "running", requestId, success, response.body());
         } catch (Exception e) {
             logger.error("Failed to invoke running operation", e);
-            publishReply("running", requestId, false, e.getMessage());
+            publishReply(route.stationId, "running", requestId, false, e.getMessage());
         }
     }
 
-    private void handleSpeed(String topic, String payload) {
-        if (speedInvokeUrl == null || speedInvokeUrl.isBlank()) {
-            logger.warn("speed-url is empty; skipping speed command");
+    private void handleSpeed(TopicRoute route, String payload) {
+        String invokeUrl = resolveInvokeUrl(route.stationId, "conveyor", speedOperationIdShort, speedInvokeUrl);
+        if (invokeUrl == null || invokeUrl.isBlank()) {
+            logger.warn("No speed invoke URL resolved for station '{}'", route.stationId);
             return;
         }
 
@@ -184,23 +221,24 @@ public class MqttCommandBridgeService implements MqttCallback {
             value = parseDoubleValue(payload, "speed");
         } catch (Exception e) {
             logger.error("Invalid speed command payload", e);
-            publishReply("speed", requestId, false, e.getMessage());
+            publishReply(route.stationId, "speed", requestId, false, e.getMessage());
             return;
         }
 
         try {
-            HttpResponse<String> response = invokeOperation(speedInvokeUrl, speedIdShort, "xs:double", String.valueOf(value));
+            HttpResponse<String> response = invokeOperation(invokeUrl, speedIdShort, "xs:double", String.valueOf(value));
             boolean success = response.statusCode() >= 200 && response.statusCode() < 300;
-            publishReply("speed", requestId, success, response.body());
+            publishReply(route.stationId, "speed", requestId, success, response.body());
         } catch (Exception e) {
             logger.error("Failed to invoke speed operation", e);
-            publishReply("speed", requestId, false, e.getMessage());
+            publishReply(route.stationId, "speed", requestId, false, e.getMessage());
         }
     }
 
-    private void handleMoveBox(String topic, String payload) {
-        if (moveBoxInvokeUrl == null || moveBoxInvokeUrl.isBlank()) {
-            logger.warn("move-box-url is empty; skipping moveBox command");
+    private void handleMoveBox(TopicRoute route, String payload) {
+        String invokeUrl = resolveInvokeUrl(route.stationId, "robot", moveBoxOperationIdShort, moveBoxInvokeUrl);
+        if (invokeUrl == null || invokeUrl.isBlank()) {
+            logger.warn("No moveBox invoke URL resolved for station '{}'", route.stationId);
             return;
         }
 
@@ -223,7 +261,7 @@ public class MqttCommandBridgeService implements MqttCallback {
             }
         } catch (Exception e) {
             logger.error("Invalid movebox command payload", e);
-            publishReply("moveBox", requestId, false, e.getMessage());
+            publishReply(route.stationId, "moveBox", requestId, false, e.getMessage());
             return;
         }
 
@@ -232,26 +270,27 @@ public class MqttCommandBridgeService implements MqttCallback {
             String body = buildMultiInvokeRequest(moveBoxIdShort, conveyor, pallet);
 
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(moveBoxInvokeUrl))
+                    .uri(URI.create(invokeUrl))
                     .timeout(Duration.ofMillis(timeoutMs))
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            logger.info("Invoke {} returned status {}", moveBoxInvokeUrl, response.statusCode());
+            logger.info("Invoke {} returned status {}", invokeUrl, response.statusCode());
 
             boolean success = response.statusCode() >= 200 && response.statusCode() < 300;
-            publishReply("moveBox", requestId, success, response.body());
+            publishReply(route.stationId, "moveBox", requestId, success, response.body());
         } catch (Exception e) {
             logger.error("Failed to invoke movebox operation", e);
-            publishReply("moveBox", requestId, false, e.getMessage());
+            publishReply(route.stationId, "moveBox", requestId, false, e.getMessage());
         }
     }
 
-    private void handleMoveToHome(String topic, String payload) {
-        if (moveToHomeInvokeUrl == null || moveToHomeInvokeUrl.isBlank()) {
-            logger.warn("move-to-home-url is empty; skipping moveToHome command");
+    private void handleMoveToHome(TopicRoute route, String payload) {
+        String invokeUrl = resolveInvokeUrl(route.stationId, "robot", moveToHomeOperationIdShort, moveToHomeInvokeUrl);
+        if (invokeUrl == null || invokeUrl.isBlank()) {
+            logger.warn("No moveToHome invoke URL resolved for station '{}'", route.stationId);
             return;
         }
 
@@ -261,18 +300,185 @@ public class MqttCommandBridgeService implements MqttCallback {
             value = parseBooleanValue(payload, "move");
         } catch (Exception e) {
             logger.error("Invalid moveToHome command payload", e);
-            publishReply("moveToHome", requestId, false, e.getMessage());
+            publishReply(route.stationId, "moveToHome", requestId, false, e.getMessage());
             return;
         }
 
         try {
-            HttpResponse<String> response = invokeOperation(moveToHomeInvokeUrl, moveToHomeIdShort, "xs:boolean", String.valueOf(value));
+            HttpResponse<String> response = invokeOperation(invokeUrl, moveToHomeIdShort, "xs:boolean", String.valueOf(value));
             boolean success = response.statusCode() >= 200 && response.statusCode() < 300;
-            publishReply("moveToHome", requestId, success, response.body());
+            publishReply(route.stationId, "moveToHome", requestId, success, response.body());
         } catch (Exception e) {
             logger.error("Failed to invoke moveToHome operation", e);
-            publishReply("moveToHome", requestId, false, e.getMessage());
+            publishReply(route.stationId, "moveToHome", requestId, false, e.getMessage());
         }
+    }
+
+    private TopicRoute parseTopicRoute(String topic) {
+        if (topic == null || topic.isBlank()) {
+            return null;
+        }
+
+        String[] topicParts = topic.split("/");
+        String[] prefixParts = commandPrefix == null ? new String[0] : commandPrefix.split("/");
+        if (prefixParts.length == 0 || topicParts.length < prefixParts.length + 2) {
+            return null;
+        }
+
+        for (int i = 0; i < prefixParts.length; i++) {
+            if (!prefixParts[i].equals(topicParts[i])) {
+                return null;
+            }
+        }
+
+        String stationId = topicParts[prefixParts.length].trim();
+        String action = topicParts[prefixParts.length + 1].trim().toLowerCase(Locale.ROOT).replace("-", "");
+        if (stationId.isEmpty() || action.isEmpty()) {
+            return null;
+        }
+        return new TopicRoute(stationId, action);
+    }
+
+    private String resolveInvokeUrl(String stationId, String domain, String operationPathIdShort, String fallbackUrl) {
+        StationBinding binding = stationBindings.get(normalizeStationId(stationId));
+        if (binding != null) {
+            String submodelB64 = "conveyor".equals(domain) ? binding.conveyorSubmodelB64 : binding.robotSubmodelB64;
+            if (submodelB64 != null && !submodelB64.isBlank()) {
+                return buildInvokeUrl(submodelB64, operationPathIdShort);
+            }
+        }
+
+        if (fallbackUrl != null && !fallbackUrl.isBlank()) {
+            logger.debug("Using static fallback invoke URL for station '{}' and domain '{}'", stationId, domain);
+            return fallbackUrl;
+        }
+
+        return null;
+    }
+
+    private String buildInvokeUrl(String submodelB64, String operationPathIdShort) {
+        String base = (aasBaseUrl == null ? "http://aas-env:8081" : aasBaseUrl).replaceAll("/+$", "");
+        String opPath = operationPathIdShort == null ? "" : operationPathIdShort.trim();
+        return base + "/submodels/" + submodelB64 + "/submodel-elements/" + opPath + "/invoke";
+    }
+
+    private void loadStationBindings() {
+        stationBindings.clear();
+
+        boolean loadedAny = false;
+
+        if (stationBindingsFile != null && !stationBindingsFile.isBlank()) {
+            loadedAny = loadStationBindingsFromFile(stationBindingsFile.trim()) || loadedAny;
+        }
+
+        if (stationBindingsRaw != null && !stationBindingsRaw.isBlank()) {
+            parseStationBindingsCsv(stationBindingsRaw);
+            loadedAny = true;
+        }
+
+        if (!loadedAny) {
+            logger.info("No station bindings configured. Dynamic routing disabled; static URLs will be used when configured.");
+            return;
+        }
+
+        logger.info("Loaded {} dynamic station binding(s) for MQTT bridge", stationBindings.size());
+    }
+
+    private boolean loadStationBindingsFromFile(String filePath) {
+        try {
+            Path path = Path.of(filePath);
+            if (!Files.exists(path)) {
+                logger.warn("Station bindings file does not exist: {}", filePath);
+                return false;
+            }
+
+            String content = Files.readString(path, StandardCharsets.UTF_8);
+            parseStationBindingsJson(content, filePath);
+            return true;
+        } catch (Exception e) {
+            logger.warn("Failed to load station bindings file {}: {}", filePath, e.getMessage());
+            return false;
+        }
+    }
+
+    private void parseStationBindingsCsv(String rawBindings) {
+        String[] entries = rawBindings.split("[;,]");
+        for (String entry : entries) {
+            String trimmed = entry.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+
+            int separatorIndex = trimmed.indexOf('=');
+            if (separatorIndex < 0) {
+                separatorIndex = trimmed.indexOf(':');
+            }
+            if (separatorIndex <= 0 || separatorIndex == trimmed.length() - 1) {
+                logger.warn("Ignoring malformed station binding '{}'. Expected stationId=conveyorSubmodelB64|robotSubmodelB64", trimmed);
+                continue;
+            }
+
+            String stationId = trimmed.substring(0, separatorIndex).trim();
+            String rhs = trimmed.substring(separatorIndex + 1).trim();
+            String[] ids = rhs.split("\\|", 2);
+            String conveyor = ids[0].trim();
+            String robot = ids.length > 1 ? ids[1].trim() : conveyor;
+
+            if (stationId.isEmpty() || conveyor.isEmpty()) {
+                logger.warn("Ignoring malformed station binding '{}'", trimmed);
+                continue;
+            }
+
+            stationBindings.put(normalizeStationId(stationId), new StationBinding(conveyor, robot));
+        }
+    }
+
+    private void parseStationBindingsJson(String json, String sourceName) throws IOException {
+        JsonNode root = mapper.readTree(json);
+        if (root == null || !root.isObject()) {
+            logger.warn("Ignoring station bindings from {}: expected JSON object", sourceName);
+            return;
+        }
+
+        root.fields().forEachRemaining(entry -> {
+            String stationId = entry.getKey();
+            JsonNode value = entry.getValue();
+
+            String conveyor = null;
+            String robot = null;
+
+            if (value.isTextual()) {
+                String[] ids = value.asText().split("\\|", 2);
+                conveyor = ids[0].trim();
+                robot = ids.length > 1 ? ids[1].trim() : conveyor;
+            } else if (value.isObject()) {
+                JsonNode conveyorNode = value.get("conveyorSubmodelB64");
+                JsonNode robotNode = value.get("robotSubmodelB64");
+                if (conveyorNode != null && conveyorNode.isTextual()) {
+                    conveyor = conveyorNode.asText().trim();
+                }
+                if (robotNode != null && robotNode.isTextual()) {
+                    robot = robotNode.asText().trim();
+                }
+                if ((robot == null || robot.isBlank()) && conveyor != null) {
+                    robot = conveyor;
+                }
+            }
+
+            if (stationId == null || stationId.isBlank() || conveyor == null || conveyor.isBlank()) {
+                logger.warn("Ignoring malformed station binding for key '{}' in {}", stationId, sourceName);
+                return;
+            }
+
+            stationBindings.put(normalizeStationId(stationId), new StationBinding(conveyor, robot));
+        });
+    }
+
+    private String normalizeStationId(String stationId) {
+        if (stationId == null) {
+            return "";
+        }
+        return stationId.trim().toLowerCase(Locale.ROOT);
     }
 
     private HttpResponse<String> invokeOperation(String url, String idShort, String valueType, String value)
@@ -411,7 +617,7 @@ public class MqttCommandBridgeService implements MqttCallback {
         return normalized.equals("true") || normalized.equals("1") || normalized.equals("on");
     }
 
-    private void publishReply(String operation, String requestId, boolean success, String message) {
+    private void publishReply(String stationId, String operation, String requestId, boolean success, String message) {
         if (replyTopicPrefix == null || replyTopicPrefix.isBlank()) {
             return;
         }
@@ -423,10 +629,42 @@ public class MqttCommandBridgeService implements MqttCallback {
             reply.put("success", success);
             reply.put("message", message == null ? "" : message);
 
-            String topic = replyTopicPrefix + "/" + operation;
+            String topic;
+            if (stationId == null || stationId.isBlank()) {
+                topic = replyTopicPrefix + "/" + operation;
+            } else {
+                topic = replyTopicPrefix + "/" + sanitizeTopicPart(stationId) + "/" + operation;
+            }
             mqttClient.publish(topic, new MqttMessage(reply.toString().getBytes(StandardCharsets.UTF_8)));
         } catch (Exception e) {
             logger.warn("Failed to publish MQTT reply", e);
+        }
+    }
+
+    private String sanitizeTopicPart(String value) {
+        if (value == null || value.isBlank()) {
+            return "unknown";
+        }
+        return value.trim().replace('/', '_').replace('+', '_').replace('#', '_');
+    }
+
+    private static final class TopicRoute {
+        private final String stationId;
+        private final String action;
+
+        private TopicRoute(String stationId, String action) {
+            this.stationId = stationId;
+            this.action = action;
+        }
+    }
+
+    private static final class StationBinding {
+        private final String conveyorSubmodelB64;
+        private final String robotSubmodelB64;
+
+        private StationBinding(String conveyorSubmodelB64, String robotSubmodelB64) {
+            this.conveyorSubmodelB64 = conveyorSubmodelB64;
+            this.robotSubmodelB64 = robotSubmodelB64;
         }
     }
 }
