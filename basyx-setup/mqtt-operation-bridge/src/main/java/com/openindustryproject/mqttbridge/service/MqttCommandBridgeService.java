@@ -240,7 +240,7 @@ public class MqttCommandBridgeService implements MqttCallback {
         if (invokeUrl == null || invokeUrl.isBlank()) {
             logger.warn("No moveBox invoke URL resolved for station '{}'", route.stationId);
             return;
-        }
+        }s
 
         String requestId = extractRequestId(payload);
         String conveyor;
