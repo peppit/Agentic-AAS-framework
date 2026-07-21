@@ -1,10 +1,12 @@
 [
   {
     "stateSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTExNV85MDgxXzYwNjJfMTg2NS9yb2JvdDAx",
-    "skillsSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Ny9yb2JvdDAx"
+    "skillsSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Ny9yb2JvdDAx",
+    "stationId": "station_01"
   },
   {
     "stateSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTExNV85MDgxXzYwNjJfMTg2NS9yb2JvdDAy",
-    "skillsSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Ny9yb2JvdDAy"
+    "skillsSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Ny9yb2JvdDAy",
+    "stationId": "station_02"
   }
 ]

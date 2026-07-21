@@ -186,6 +186,7 @@ services:
       - ROBOT_MOTION_START_GRACE_SECONDS=5.0
       - SENSOR_TRUE_REARM_SECONDS=2.0
       - ROBOT_BINDINGS_FILE=/config/robot_bindings.json
+      - STATION_BINDINGS_FILE=/config/aasserver.json
       - ORCHESTRATOR_LOG_CSV_PATH=/app/orchestrator_logs.csv
       - ORCHESTRATOR_SUMMARY_CSV_PATH=/app/orchestrator_summary.csv
       - SUMMARY_BATCH_SIZE=5
@@ -193,6 +194,7 @@ services:
       - ../orchestrator_logs.csv:/app/orchestrator_logs.csv
       - ../orchestrator_summary.csv:/app/orchestrator_summary.csv
       - ./python-agent/robot_bindings.json:/config/robot_bindings.json:ro
+      - ./databridge/aasserver.json:/config/aasserver.json:ro
 
     restart: always
     depends_on:
