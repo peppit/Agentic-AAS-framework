@@ -2,56 +2,56 @@
   {
     "routeId": "conveyor-belt-running",
     "datasource": "conveyorbelt-running-source",
-    "transformers": ["jsonataExtractIsRunning"],
+    "transformers": ["jsonataExtractIsRunningStation01"],
     "datasinks": ["ConveyorBelt_Running"],
     "trigger": "event"
   },
   {
     "routeId": "conveyor-belt-current-speed",
     "datasource": "conveyorbelt-speed-source",
-    "transformers": ["jsonataExtractCurrentSpeed"],
+    "transformers": ["jsonataExtractCurrentSpeedStation01"],
     "datasinks": ["ConveyorBelt_CurrentSpeed"],
     "trigger": "event"
   },
   {
     "routeId": "conveyor-belt-sensor",
     "datasource": "conveyorbelt-sensor-source",
-    "transformers": ["jsonataExtractBoxDetected"],
+    "transformers": ["jsonataExtractBoxDetectedStation01"],
     "datasinks": ["ConveyorBelt_Sensor"],
     "trigger": "event"
   },
   {
     "routeId": "robot-isMoving",
     "datasource": "robot-isMoving-source",
-    "transformers": ["jsonataExtractIsMoving"],
+    "transformers": ["jsonataExtractIsMovingStation01"],
     "datasinks": ["Robot_IsMoving"],
     "trigger": "event"
   },
   {
     "routeId": "conveyor-belt-running-02",
     "datasource": "conveyorbelt-running-source-02",
-    "transformers": ["jsonataExtractIsRunning"],
+    "transformers": ["jsonataExtractIsRunningStation02"],
     "datasinks": ["ConveyorBelt_Running_02"],
     "trigger": "event"
   },
   {
     "routeId": "conveyor-belt-current-speed-02",
     "datasource": "conveyorbelt-speed-source-02",
-    "transformers": ["jsonataExtractCurrentSpeed"],
+    "transformers": ["jsonataExtractCurrentSpeedStation02"],
     "datasinks": ["ConveyorBelt_CurrentSpeed_02"],
     "trigger": "event"
   },
   {
     "routeId": "conveyor-belt-sensor-02",
     "datasource": "conveyorbelt-sensor-source-02",
-    "transformers": ["jsonataExtractBoxDetected"],
+    "transformers": ["jsonataExtractBoxDetectedStation02"],
     "datasinks": ["ConveyorBelt_Sensor_02"],
     "trigger": "event"
   },
   {
     "routeId": "robot-isMoving-02",
     "datasource": "robot-isMoving-source-02",
-    "transformers": ["jsonataExtractIsMoving"],
+    "transformers": ["jsonataExtractIsMovingStation02"],
     "datasinks": ["Robot_IsMoving_02"],
     "trigger": "event"
   }

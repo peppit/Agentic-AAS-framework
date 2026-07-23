@@ -1,0 +1,42 @@
+{
+  "station_01": {
+    "stationId": "station_01",
+    "schemaVersion": "1.0",
+    "assets": {
+      "conveyor": {
+        "submodelId": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTI5M18yMTQyXzYwNjJfOTE0OC9jb252ZXlvcjAx",
+        "properties": {
+          "isRunning": {"idShort": "IsRunning", "type": "boolean"},
+          "currentSpeed": {"idShort": "CurrentSpeed", "type": "double"},
+          "boxDetected": {"idShort": "Sensor_BoxPresent", "type": "boolean"}
+        }
+      },
+      "robot": {
+        "submodelId": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTExNV85MDgxXzYwNjJfMTg2NS9yb2JvdDAx",
+        "properties": {
+          "isMoving": {"idShort": "IsMoving", "type": "boolean"}
+        }
+      }
+    }
+  },
+  "station_02": {
+    "stationId": "station_02",
+    "schemaVersion": "1.0",
+    "assets": {
+      "conveyor": {
+        "submodelId": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTI5M18yMTQyXzYwNjJfOTE0OC9zdGF0aW9uMDIvY29udmV5b3IwMQ",
+        "properties": {
+          "isRunning": {"idShort": "IsRunning", "type": "boolean"},
+          "currentSpeed": {"idShort": "CurrentSpeed", "type": "double"},
+          "boxDetected": {"idShort": "Sensor_BoxPresent", "type": "boolean"}
+        }
+      },
+      "robot": {
+        "submodelId": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTExNV85MDgxXzYwNjJfMTg2NS9yb2JvdDAy",
+        "properties": {
+          "isMoving": {"idShort": "IsMoving", "type": "boolean"}
+        }
+      }
+    }
+  }
+}

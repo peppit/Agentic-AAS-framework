@@ -1,0 +1,11 @@
+{
+  "station_01": {
+    "conveyorSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTI5M18yMTQyXzYwNjJfOTE0OC9jb252ZXlvcjAx",
+    "robotStateSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTExNV85MDgxXzYwNjJfMTg2NS9yb2JvdDAx"
+  },
+  "station_02": {
+    "conveyorSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTI5M18yMTQyXzYwNjJfOTE0OC9zdGF0aW9uMDIvY29udmV5b3IwMQ",
+    "robotStateSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTExNV85MDgxXzYwNjJfMTg2NS9yb2JvdDAy"
+  }
+}
+

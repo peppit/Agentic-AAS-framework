@@ -161,6 +161,7 @@ services:
   databridge:
     image: eclipsebasyx/databridge:1.0.0-milestone-08
     container_name: databridge
+    profiles: ["legacy-databridge"]
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -169,6 +170,31 @@ services:
     depends_on:
       aas-env:
         condition: service_healthy
+
+  mqtt-aas-bridge:
+    build:
+      context: ./mqtt-aas-bridge
+      dockerfile: Dockerfile
+    container_name: mqtt-aas-bridge
+    environment:
+      - MQTT_HOST=mosquitto
+      - MQTT_PORT=1883
+      - MQTT_TELEMETRY_TOPIC=simulation/+/+
+      - MQTT_DYNAMIC_TELEMETRY_TOPIC=factory/+/telemetry/+
+      - MQTT_MANIFEST_TOPIC=factory/+/manifest
+      - BASYX_BASE_URL=http://aas-env:8081
+      - TELEMETRY_BINDINGS_FILE=/config/bindings.json
+      - STATION_QUEUE_SIZE=1000
+      - EVENT_DEDUP_WINDOW=4096
+    volumes:
+      - ./mqtt-aas-bridge/bindings.json:/config/bindings.json:ro
+    restart: always
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      aas-env:
+        condition: service_healthy
+
 
   python-agent:
     build:
@@ -180,6 +206,7 @@ services:
       - MQTT_HOST=mosquitto
       - MQTT_PORT=1883
       - MQTT_TOPIC=sm-repository/+/submodels/+/submodelElements/+/updated
+      - OPERATION_REPLY_TOPIC=simulation/+/replies/+
       - HTTP_TIMEOUT_SECONDS=8
       - ROBOT_SETTLE_TIMEOUT_SECONDS=45
       - ROBOT_STATUS_POLL_SECONDS=0.4

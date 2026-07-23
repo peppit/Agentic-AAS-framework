@@ -1,25 +1,49 @@
 [
 	{
-		"uniqueId": "jsonataExtractIsRunning",
-		"queryPath": "jsonExtractIsRunning.json",
+		"uniqueId": "jsonataExtractIsRunningStation01",
+		"queryPath": "jsonExtractIsRunning.jsonata",
 		"inputType": "JsonString",
 		"outputType": "JsonString"
 	},
 	{
-		"uniqueId": "jsonataExtractCurrentSpeed",
-		"queryPath": "jsonExtractCurrentSpeed.json",
+		"uniqueId": "jsonataExtractCurrentSpeedStation01",
+		"queryPath": "jsonExtractCurrentSpeed.jsonata",
 		"inputType": "JsonString",
 		"outputType": "JsonString"
 	},
 	{
-		"uniqueId": "jsonataExtractBoxDetected",
-		"queryPath": "jsonExtractBoxDetected.json",
+		"uniqueId": "jsonataExtractBoxDetectedStation01",
+		"queryPath": "jsonExtractBoxDetected.jsonata",
 		"inputType": "JsonString",
 		"outputType": "JsonString"
 	},
 	{
-		"uniqueId": "jsonataExtractIsMoving",
-		"queryPath": "jsonExtractIsMoving.json",
+		"uniqueId": "jsonataExtractIsMovingStation01",
+		"queryPath": "jsonExtractIsMoving.jsonata",
+		"inputType": "JsonString",
+		"outputType": "JsonString"
+	},
+	{
+		"uniqueId": "jsonataExtractIsRunningStation02",
+		"queryPath": "jsonExtractIsRunning.jsonata",
+		"inputType": "JsonString",
+		"outputType": "JsonString"
+	},
+	{
+		"uniqueId": "jsonataExtractCurrentSpeedStation02",
+		"queryPath": "jsonExtractCurrentSpeed.jsonata",
+		"inputType": "JsonString",
+		"outputType": "JsonString"
+	},
+	{
+		"uniqueId": "jsonataExtractBoxDetectedStation02",
+		"queryPath": "jsonExtractBoxDetected.jsonata",
+		"inputType": "JsonString",
+		"outputType": "JsonString"
+	},
+	{
+		"uniqueId": "jsonataExtractIsMovingStation02",
+		"queryPath": "jsonExtractIsMoving.jsonata",
 		"inputType": "JsonString",
 		"outputType": "JsonString"
 	}

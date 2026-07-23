@@ -3,6 +3,7 @@ import csv
 import json
 import os
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean
@@ -19,12 +20,16 @@ class AgentConfig:
     mqtt_host: str = os.getenv("MQTT_HOST", "mosquitto")
     mqtt_port: int = int(os.getenv("MQTT_PORT", "1883"))
     mqtt_topic: str = os.getenv("MQTT_TOPIC", "sm-repository/+/submodels/+/submodelElements/+/updated")
+    operation_reply_topic: str = os.getenv("OPERATION_REPLY_TOPIC", "simulation/+/replies/+")
     basyx_base_url: str = os.getenv("BASYX_BASE_URL", "http://aas-env:8081") 
     http_timeout_seconds: float = float(os.getenv("HTTP_TIMEOUT_SECONDS", "8"))
     robot_settle_timeout_seconds: float = float(os.getenv("ROBOT_SETTLE_TIMEOUT_SECONDS", "45"))
     robot_status_poll_seconds: float = float(os.getenv("ROBOT_STATUS_POLL_SECONDS", "0.4"))
     robot_motion_start_grace_seconds: float = float(os.getenv("ROBOT_MOTION_START_GRACE_SECONDS", "5.0"))
     sensor_true_rearm_seconds: float = float(os.getenv("SENSOR_TRUE_REARM_SECONDS", "2.0"))
+    job_retry_seconds: float = float(os.getenv("JOB_RETRY_SECONDS", "0.5"))
+    job_timeout_seconds: float = float(os.getenv("JOB_TIMEOUT_SECONDS", "60"))
+    invoke_retry_count: int = int(os.getenv("INVOKE_RETRY_COUNT", "3"))
     robot_bindings_file: str = os.getenv("ROBOT_BINDINGS_FILE", "")
     station_bindings_file: str = os.getenv("STATION_BINDINGS_FILE", "")
     register_robots: str = os.getenv("REGISTERED_ROBOTS", "")
@@ -73,6 +78,9 @@ class FactoryOrchestrator:
         self.sensor_states: dict[str, bool] = {}
         self.sensor_last_true_at: dict[str, float] = {}
         self.sensor_waiting_for_clear: dict[str, bool] = {}
+        self.station_lifecycles: dict[str, dict] = {}
+        self.lifecycle_by_request_id: dict[str, dict] = {}
+        self.pending_operation_acks: dict[str, dict] = {}
         self.log_lock = asyncio.Lock()
         self.log_headers = [
             "station_id",
@@ -111,6 +119,11 @@ class FactoryOrchestrator:
         self.robots = self._build_robot_endpoints(config)
         if not self.robots:
             print("[ORCHESTRATOR] Warning: no robot bindings configured; dispatch cannot start")
+
+
+    async def _retry_job_later(self, job: dict) -> None:
+        await asyncio.sleep(self.config.job_retry_seconds)
+        await self.job_queue.put(job)
 
     def _ensure_csv_file(self, path: Path, headers: list[str], check_headers: bool = False) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -381,7 +394,7 @@ class FactoryOrchestrator:
 
 
     async def handle_event(self, submodel_b64: str, property_id: str, payload: str, mqtt_topic: str, received_at_ms: int) -> None:
-        
+
         if "Present" not in property_id and "Clear" not in property_id: 
             return
 
@@ -399,10 +412,19 @@ class FactoryOrchestrator:
         station_id = self.station_by_conveyor_submodel.get(normalize_submodel_id(submodel_b64), "")
 
         if bool_value is False:
-            if self.sensor_waiting_for_clear.get(sensor_key):
+            lifecycle = self.station_lifecycles.get(normalize_station_id(station_id)) if station_id else None
+            if lifecycle and lifecycle.get("sensor_key") == sensor_key:
+                lifecycle["sensor_clear"] = True
+                await self._try_finalize_lifecycle(lifecycle)
+            elif self.sensor_waiting_for_clear.get(sensor_key):
                 self.sensor_waiting_for_clear[sensor_key] = False
                 print(f"[ORCHESTRATOR] Sensor '{property_id}' on Conveyor '{submodel_b64}' cleared; ready for next box detection")
             return
+
+        lifecycle = self.station_lifecycles.get(normalize_station_id(station_id)) if station_id else None
+        if lifecycle and lifecycle.get("sensor_key") == sensor_key:
+            # A short false pulse must not rearm the station if the sensor is true again.
+            lifecycle["sensor_clear"] = False
 
         # After dispatching one move for this sensor, require an explicit clear (false)
         # before accepting another true detection.
@@ -435,6 +457,7 @@ class FactoryOrchestrator:
                 "token": job_token,
                 "mqtt_topic": mqtt_topic,
                 "t1_ms": received_at_ms,
+                "deadline": time.monotonic() + self.config.job_timeout_seconds,
             })
             print(f"[ORCHESTRATOR] Enqueued event: Sensor '{property_id}' triggered on Conveyor '{submodel_b64}'")
 
@@ -466,18 +489,108 @@ class FactoryOrchestrator:
                 await self.dispatch_factory_job(dispatch_job)
             except Exception as e:
                 print(f"[ERROR] Dispatch failed: {e}")
-            finally:
-                if token := dispatch_job.get("token"): self.active_jobs.discard(token)
+                await self._release_dispatch_job(dispatch_job, f"dispatch exception: {e}")
             self.dispatch_queue.task_done()
 
-    async def _read_is_moving(self, client: httpx.AsyncClient, state_url: str) -> Optional[bool]:
+    async def _release_dispatch_job(self, dispatch_job: dict, reason: str) -> None:
+        token = dispatch_job.get("token")
+        sensor_key = dispatch_job.get("sensor_key")
+        station_id = normalize_station_id(dispatch_job.get("station_id") or "")
+        if token:
+            self.active_jobs.discard(token)
+        if sensor_key:
+            self.sensor_waiting_for_clear[sensor_key] = False
+        if station_id:
+            lifecycle = self.station_lifecycles.pop(station_id, None)
+            if lifecycle and lifecycle.get("request_id"):
+                self.lifecycle_by_request_id.pop(lifecycle["request_id"], None)
+        print(
+            f"[ORCHESTRATOR] Released station lifecycle station={station_id or 'unknown'} "
+            f"reason={reason}"
+        )
+
+    async def _try_finalize_lifecycle(self, lifecycle: dict) -> None:
+        if not lifecycle.get("operation_completed") or not lifecycle.get("sensor_clear"):
+            return
+
+        station_id = lifecycle["station_id"]
+        request_id = lifecycle.get("request_id")
+        sensor_key = lifecycle.get("sensor_key")
+        token = lifecycle.get("token")
+        if token:
+            self.active_jobs.discard(token)
+        if sensor_key:
+            self.sensor_waiting_for_clear[sensor_key] = False
+        self.station_lifecycles.pop(station_id, None)
+        if request_id:
+            self.lifecycle_by_request_id.pop(request_id, None)
+            self.pending_operation_acks.pop(request_id, None)
+        print(
+            f"[ORCHESTRATOR] Station '{station_id}' rearmed after operation completion "
+            "and sensor clear"
+        )
+
+    async def handle_operation_ack(self, topic: str, payload: str) -> None:
         try:
-            status_res = await client.get(f"{state_url}/submodel-elements/IsMoving")
-            if status_res.status_code == 200:
-                return parse_bool_value(status_res.text)
+            ack = json.loads(payload)
+        except json.JSONDecodeError:
+            print(f"[ORCHESTRATOR] Ignored malformed operation acknowledgement: {payload!r}")
+            return
+        if not isinstance(ack, dict):
+            return
+
+        request_id = str(ack.get("requestId") or "").strip()
+        station_id = normalize_station_id(str(ack.get("stationId") or ""))
+        status = str(ack.get("status") or "").strip().lower()
+        if not request_id or not station_id or status not in {"started", "completed", "failed"}:
+            print(f"[ORCHESTRATOR] Ignored incomplete operation acknowledgement: {ack}")
+            return
+
+        lifecycle = self.lifecycle_by_request_id.get(request_id)
+        if lifecycle is None:
+            # The MQTT acknowledgement can arrive before the HTTP invocation response.
+            self.pending_operation_acks[request_id] = ack
+            return
+
+        if lifecycle["station_id"] != station_id:
+            print(
+                f"[ORCHESTRATOR] Ignored acknowledgement for request {request_id}: "
+                f"station mismatch {station_id} != {lifecycle['station_id']}"
+            )
+            return
+
+        if status == "started":
+            lifecycle["operation_started"] = True
+        elif status == "completed":
+            lifecycle["operation_completed"] = True
+            await self._try_finalize_lifecycle(lifecycle)
+        else:
+            lifecycle["operation_failed"] = True
+            await self._release_dispatch_job(lifecycle, ack.get("error") or "operation failed")
+
+    async def _read_is_moving(
+        self,
+        client: httpx.AsyncClient,
+        state_url: str,
+    ) -> Optional[bool]:
+        try:
+            response = await client.get(f"{state_url}/submodel-elements/IsMoving")
+
+            if response.status_code != 200:
+                print(
+                    "[ORCHESTRATOR] Robot state read returned "
+                    f"HTTP {response.status_code}"
+                )
+                return None
+
+            value = parse_bool_value(response.text)
+            if value is None:
+                print(f"[ORCHESTRATOR] Invalid IsMoving value: {response.text!r}")
+            return value
+
         except Exception as exc:
-            print(f"[ORCHESTRATOR] Error reading robot state via HTTP: {exc}")
-        return False
+            print(f"[ORCHESTRATOR] Error reading robot state: {exc}")
+            return None
 
     async def _wait_for_motion_settle(self, client: httpx.AsyncClient, state_url: str) -> bool:
         timeout_at = asyncio.get_running_loop().time() + self.config.robot_settle_timeout_seconds
@@ -520,6 +633,11 @@ class FactoryOrchestrator:
         job_station_id = job.get("station_id") or ""
         client = self.http_client
 
+        deadline = job.setdefault(
+            "deadline",
+            time.monotonic() + self.config.job_timeout_seconds,
+        )
+
         for robot in self.robots:
             if job_station_id and robot.station_id and normalize_station_id(robot.station_id) != normalize_station_id(job_station_id):
                 continue
@@ -561,11 +679,21 @@ class FactoryOrchestrator:
 
             # 3. Parameter and Operation Matching
             matched_route = None
+            target_op = None
             for route in routes:
+                if not isinstance(route, dict):
+                    continue
+
                 route_values = route.get("value", [])
                 if not isinstance(route_values, list):
                     continue
-                elements = {elem["idShort"]: elem.get("value") for elem in route_values if "idShort" in elem}
+
+                elements = {
+                    element["idShort"]: element.get("value")
+                    for element in route_values
+                    if isinstance(element, dict) and element.get("idShort")
+                }
+
                 if elements.get("TriggerSensor") == triggering_sensor:
                     matched_route = route
                     target_op = elements.get("TargetOperation")
@@ -601,17 +729,20 @@ class FactoryOrchestrator:
                     }
                 })
 
+            request_id = str(uuid.uuid4())
+            input_arguments.append({
+                "value": {
+                    "modelType": "Property",
+                    "idShort": "requestId",
+                    "valueType": "xs:string",
+                    "value": request_id,
+                }
+            })
             body = {
                 "inputArguments": input_arguments,
                 "inoutputArguments": [],
                 "requestedTimeout": int(self.config.http_timeout_seconds * 1000)
             }
-            if triggering_sensor_key:
-                self.sensor_waiting_for_clear[triggering_sensor_key] = True
-                print(
-                    f"[ORCHESTRATOR] Sensor '{triggering_sensor}' latched until it clears (false) before next move"
-                )
-
             t2_ms = int(time.time() * 1000)
             dispatch_payload = {
                 "run_id": job.get("run_id"),
@@ -619,6 +750,7 @@ class FactoryOrchestrator:
                 "conveyor_b64": job.get("conveyor_b64"),
                 "station_id": job_station_id,
                 "sensor": triggering_sensor,
+                "sensor_key": triggering_sensor_key,
                 "mqtt_topic": job.get("mqtt_topic"),
                 "t1_ms": job.get("t1_ms"),
                 "t2_ms": t2_ms,
@@ -627,6 +759,7 @@ class FactoryOrchestrator:
                 "target_operation": target_op,
                 "invoke_url": f"{skills_url}/submodel-elements/{target_op}/invoke",
                 "body": body,
+                "request_id": request_id,
             }
             await self.dispatch_queue.put(dispatch_payload)
             print(
@@ -635,7 +768,18 @@ class FactoryOrchestrator:
             )
             return
         
-        print(f"[ORCHESTRATOR] Resource Warning: No available robots can currently service sensor {triggering_sensor}")
+        if time.monotonic() < deadline:
+            print(
+                f"[ORCHESTRATOR] Robot unavailable for {triggering_sensor}; "
+                f"retrying in {self.config.job_retry_seconds:.1f}s"
+            )
+            asyncio.create_task(self._retry_job_later(job))
+            return
+
+        print(
+            f"[ORCHESTRATOR] Job for {triggering_sensor} timed out after "
+            f"{self.config.job_timeout_seconds:.1f}s"
+        )
         self.active_jobs.discard(job["token"])
 
     async def dispatch_factory_job(self, dispatch_job: dict) -> None:
@@ -646,7 +790,46 @@ class FactoryOrchestrator:
             f"skill '{dispatch_job.get('target_operation')}' to robot {dispatch_job.get('robot_skills_submodel_b64')}"
         )
 
-        response = await self.http_client.post(dispatch_job["invoke_url"], json=dispatch_job["body"])
+        request_id = dispatch_job["request_id"]
+        station_id = normalize_station_id(dispatch_job.get("station_id") or "")
+        sensor_key = dispatch_job.get("sensor_key")
+        lifecycle = {
+            **dispatch_job,
+            "station_id": station_id,
+            "request_id": request_id,
+            "operation_started": False,
+            "operation_completed": False,
+            "operation_failed": False,
+            "sensor_clear": self.sensor_states.get(sensor_key) is False,
+        }
+        self.station_lifecycles[station_id] = lifecycle
+        self.lifecycle_by_request_id[request_id] = lifecycle
+        if sensor_key:
+            self.sensor_waiting_for_clear[sensor_key] = True
+        print(
+            f"[ORCHESTRATOR] Station '{station_id}' latched for request {request_id}; "
+            "waiting for operation completion and sensor clear"
+        )
+
+        response = None
+        attempts = max(1, self.config.invoke_retry_count)
+        for attempt in range(1, attempts + 1):
+            try:
+                response = await self.http_client.post(
+                    dispatch_job["invoke_url"],
+                    json=dispatch_job["body"],
+                )
+                break
+            except httpx.HTTPError as exc:
+                print(
+                    f"[ORCHESTRATOR] Robot invocation failed "
+                    f"(attempt {attempt}/{attempts}): {exc}"
+                )
+
+        if response is None:
+            await self._release_dispatch_job(dispatch_job, "operation invocation produced no response")
+            return
+
         print(f"[ORCHESTRATOR] Response status from robot: {response.status_code}")
 
         t1_ms = dispatch_job.get("t1_ms")
@@ -672,6 +855,10 @@ class FactoryOrchestrator:
         )
 
         if response.status_code < 400:
+            pending_ack = self.pending_operation_acks.pop(request_id, None)
+            if pending_ack:
+                await self.handle_operation_ack("", json.dumps(pending_ack))
+
             state_url = f"{self.config.basyx_base_url}/submodels/{dispatch_job.get('robot_state_submodel_b64')}"
             robot = RobotEndpoints(
                 state_submodel_b64=dispatch_job.get("robot_state_submodel_b64"),
@@ -679,6 +866,12 @@ class FactoryOrchestrator:
                 station_id=dispatch_job.get("station_id") or "",
             )
             asyncio.create_task(self._manage_robot_cooldown(robot, state_url))
+            await self._try_finalize_lifecycle(lifecycle)
+        else:
+            await self._release_dispatch_job(
+                dispatch_job,
+                f"operation invocation returned HTTP {response.status_code}",
+            )
 
 
 def parse_topic(topic: str) -> Optional[tuple[str, str]]:
@@ -686,6 +879,17 @@ def parse_topic(topic: str) -> Optional[tuple[str, str]]:
     if len(p) >= 7 and p[0] == "sm-repository" and p[2] == "submodels" and p[4] == "submodelElements" and p[6] == "updated":
         return p[3], p[5]
     return None
+
+
+def is_operation_reply_topic(topic: str) -> bool:
+    parts = topic.split("/")
+    return (
+        len(parts) == 4
+        and parts[0] == "simulation"
+        and parts[2] == "replies"
+        and bool(parts[1])
+        and bool(parts[3])
+    )
 
 
 def normalize_station_id(station_id: str) -> str:
@@ -702,23 +906,30 @@ async def run_agent(config: AgentConfig) -> None:
             try:
                 async with MqttClient(hostname=config.mqtt_host, port=config.mqtt_port) as client:
                     await client.subscribe(config.mqtt_topic)
+                    await client.subscribe(config.operation_reply_topic)
                     print(
                         "[AGENT] Connected to MQTT broker "
-                        f"{config.mqtt_host}:{config.mqtt_port}, subscribed to {config.mqtt_topic}"
+                        f"{config.mqtt_host}:{config.mqtt_port}, subscribed to "
+                        f"{config.mqtt_topic} and {config.operation_reply_topic}"
                     )
 
                     async for message in client.messages:
-                        parsed = parse_topic(str(message.topic))
+                        topic = str(message.topic)
+                        payload = message.payload.decode(errors="replace")
+                        if is_operation_reply_topic(topic):
+                            await orchestrator.handle_operation_ack(topic, payload)
+                            continue
+
+                        parsed = parse_topic(topic)
                         if parsed is not None:
                             submodel_b64, property_id = parsed
-                            payload = message.payload.decode(errors="replace")
                             received_at_ms = int(time.time() * 1000)
                             # Pass events to the event tracker safely
                             await orchestrator.handle_event(
                                 submodel_b64,
                                 property_id,
                                 payload,
-                                str(message.topic),
+                                topic,
                                 received_at_ms,
                             )
 

@@ -72,16 +72,17 @@ The python-agent listens to AAS submodel update events and dispatches robot oper
 
 Current behavior:
 
-1. Subscribes to MQTT topic sm-repository/+/submodels/+/submodelElements/+/updated.
+1. Subscribes to AAS update events and correlated operation replies on `simulation/+/replies/+`.
 2. Processes boolean sensor properties whose idShort contains Present or Clear.
 3. Enqueues a job on valid detection and routes it to a robot by matching TriggerSensor -> TargetOperation in SupportedCapabilities.
-4. Latches each triggering sensor after a successful dispatch and requires that sensor to clear (false) before accepting the next true detection.
-5. Polls IsMoving and waits for robot motion to settle before cooldown completion.
+4. Latches runtime state by station and correlates commands with their `requestId`.
+5. Rearms a station only after its operation reports `completed` and its sensor reports `false`.
+6. Polls `IsMoving` as a diagnostic/compatibility monitor.
 
 Key python-agent environment variables (see [docker-compose.yml](docker-compose.yml)):
 
 1. BASYX_BASE_URL
-2. MQTT_HOST / MQTT_PORT / MQTT_TOPIC
+2. MQTT_HOST / MQTT_PORT / MQTT_TOPIC / OPERATION_REPLY_TOPIC
 3. ROBOT_SUBMODEL_BINDINGS (preferred): stateSubmodelId|skillsSubmodelId[,state|skills...]
 4. REGISTERED_ROBOTS (legacy fallback when bindings are not provided)
 5. ROBOT_SETTLE_TIMEOUT_SECONDS, ROBOT_STATUS_POLL_SECONDS, ROBOT_MOTION_START_GRACE_SECONDS
