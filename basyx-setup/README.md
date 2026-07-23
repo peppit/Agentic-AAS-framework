@@ -84,9 +84,8 @@ Key python-agent environment variables (see [docker-compose.yml](docker-compose.
 1. BASYX_BASE_URL
 2. MQTT_HOST / MQTT_PORT / MQTT_TOPIC / OPERATION_REPLY_TOPIC
 3. ROBOT_SUBMODEL_BINDINGS (preferred): stateSubmodelId|skillsSubmodelId[,state|skills...]
-4. REGISTERED_ROBOTS (legacy fallback when bindings are not provided)
-5. ROBOT_SETTLE_TIMEOUT_SECONDS, ROBOT_STATUS_POLL_SECONDS, ROBOT_MOTION_START_GRACE_SECONDS
-6. SENSOR_TRUE_REARM_SECONDS
+4. ROBOT_SETTLE_TIMEOUT_SECONDS, ROBOT_STATUS_POLL_SECONDS, ROBOT_MOTION_START_GRACE_SECONDS
+5. SENSOR_TRUE_REARM_SECONDS
 
 ## Include Your Own Asset Administration Shells
 
