@@ -63,20 +63,21 @@ Environment variables:
 - `BRIDGE_MQTT_TOPIC_FILTER=oip/command/+/+`
 - `BRIDGE_MQTT_COMMAND_PREFIX=oip/command`
 - `BRIDGE_AAS_BASE_URL=http://aas-env:8081`
-- `BRIDGE_STATION_BINDINGS_FILE=/config/stations.json` (recommended)
-- `BRIDGE_STATION_BINDINGS=station_01=<conveyorSubmodelB64>|<robotSubmodelB64>,station_02=<conveyorSubmodelB64>|<robotSubmodelB64>` (optional inline fallback)
+- `STATION_REGISTRY_FILE=/config/stations.json`
+- `BRIDGE_STATION_BINDINGS=station_01=<conveyorOperationsSubmodelB64>|<robotSkillsSubmodelB64>` (optional inline fallback)
 
-Recommended `stations.json` shape:
+The default Compose setup mounts the shared top-level `stations.json`. Relevant
+fields are:
 
 ```json
 {
-  "station_01": {
-    "conveyorSubmodelB64": "<conveyorSubmodelB64>",
-    "robotSubmodelB64": "<robotSubmodelB64>"
-  },
-  "station_02": {
-    "conveyorSubmodelB64": "<conveyorSubmodelB64>",
-    "robotSubmodelB64": "<robotSubmodelB64>"
+  "schemaVersion": "1.0",
+  "stations": {
+    "station_03": {
+      "stationId": "Station_03",
+      "conveyorOperationsSubmodelB64": "<operations-submodel>",
+      "robotSkillsSubmodelB64": "<skills-submodel>"
+    }
   }
 }
 ```

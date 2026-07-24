@@ -34,7 +34,7 @@ class Config:
     telemetry_topic: str = os.getenv("MQTT_DYNAMIC_TELEMETRY_TOPIC", "factory/+/telemetry/+")
     manifest_topic: str = os.getenv("MQTT_MANIFEST_TOPIC", "factory/+/manifest")
     aas_base_url: str = os.getenv("BASYX_BASE_URL", "http://aas-env:8081")
-    bindings_file: str = os.getenv("TELEMETRY_BINDINGS_FILE", "/config/bindings.json")
+    bindings_file: str = os.getenv("STATION_REGISTRY_FILE", "/config/stations.json")
     update_retry_count: int = int(os.getenv("AAS_UPDATE_RETRY_COUNT", "5"))
     retry_base_seconds: float = float(os.getenv("AAS_RETRY_BASE_SECONDS", "0.2"))
     http_timeout_seconds: float = float(os.getenv("HTTP_TIMEOUT_SECONDS", "8"))
@@ -58,14 +58,34 @@ def load_seed_bindings(path: str) -> dict[str, dict[str, SignalBinding]]:
     if not isinstance(raw, dict):
         raise ValueError("Telemetry bindings must be a JSON object keyed by station ID")
 
+    station_entries = raw.get("stations")
+    if not isinstance(station_entries, dict):
+        raise ValueError("Station registry must contain a 'stations' object")
     stations: dict[str, dict[str, SignalBinding]] = {}
-    for station_id, binding in raw.items():
+    for station_key, binding in station_entries.items():
         if not isinstance(binding, dict):
-            raise ValueError(f"Binding for {station_id!r} must be an object")
+            raise ValueError(f"Binding for {station_key!r} must be an object")
+        station_id = str(binding.get("stationId", station_key)).strip()
+        if not station_id:
+            raise ValueError(f"Binding for {station_key!r} has no stationId")
         signals: dict[str, SignalBinding] = {}
         for signal, (submodel_key, element, value_type) in DEFAULT_SIGNALS.items():
             submodel_id = str(binding.get(submodel_key, "")).strip()
             if submodel_id:
+                property_group = (
+                    "robotProperties"
+                    if submodel_key == "robotStateSubmodelB64"
+                    else "conveyorProperties"
+                )
+                property_configs = binding.get(property_group)
+                property_config = (
+                    property_configs.get(signal, {})
+                    if isinstance(property_configs, dict)
+                    else {}
+                )
+                if isinstance(property_config, dict):
+                    element = str(property_config.get("idShort", element)).strip()
+                    value_type = str(property_config.get("type", value_type)).strip().lower()
                 signals[signal] = SignalBinding(submodel_id, element, value_type)
         if signals:
             stations[normalize_station_id(station_id)] = signals

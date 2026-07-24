@@ -36,7 +36,7 @@ Use these HTTP endpoints as operation delegation targets:
 
 1. Conveyor running: /simulation/stations/{stationId}/conveyorbelt/run
 2. Conveyor speed: /simulation/stations/{stationId}/conveyorbelt/speed
-3. Robot MoveBox: /simulation/stations/{stationId}/robot/movebox
+3. Robot MoveBox: /simulation/robot/movebox
 4. Robot MoveToHome: /simulation/stations/{stationId}/robot/move-to-home
 5. Generic station operation: /simulation/stations/{stationId}/operation/invoke
 
@@ -66,12 +66,12 @@ Example qualifier for operation delegation:
 }
 ```
 
-MoveBox qualifier example for robot0:
+MoveBox qualifier example:
 
 ```json
 {
         "type": "invocationDelegation",
-        "value": "http://opcua-operation-service:8087/simulation/stations/Station_01/robot/movebox"
+        "value": "http://opcua-operation-service:8087/simulation/robot/movebox"
 }
 ```
 
@@ -80,19 +80,16 @@ Key points:
 1. Qualifier type must be exactly invocationDelegation.
 2. URL must be reachable from aas-env container.
 3. AAS operation inputs are forwarded and parsed by the delegated service.
-4. MoveBox expects input variables Conveyor1 and Pallet1.
-5. stationId is path-based in the delegation URL and should match the intended station.
+4. MoveBox expects `StationId`, `SourcePosition`, and `TargetPosition`.
+5. `StationId` from the operation input is authoritative.
 
 ## Robot MoveBox Payload Contract
 
-For robot0 MoveBox operation delegation, define AAS input variables:
+For MoveBox operation delegation, define these AAS input variables:
 
-1. Conveyor1 (xs:string)
-2. Pallet1 (xs:string)
-
-Optional input variable:
-
-1. stationId (xs:string) can still be included for downstream payload clarity, but routing is primarily path-based.
+1. StationId (xs:string)
+2. SourcePosition (xs:string)
+3. TargetPosition (xs:string)
 
 The delegated service publishes this MQTT message shape:
 
@@ -102,20 +99,20 @@ The delegated service publishes this MQTT message shape:
         "stationId": "Station_01",
         "operation": "moveBox",
         "params": {
-                "Conveyor1": "Conveyor1",
-                "Pallet1": "Pallet1"
+                "SourcePosition": "Conveyor1",
+                "TargetPosition": "Pallet1"
         }
 }
 ```
 
-Python/OPC UA listener behavior should map operation=moveBox to the waypoint sequence:
+The simulation listener should resolve both positions within `StationId` and then execute:
 
-1. command=2 and execute=true (move to pick)
-2. execute=false and gripper=true (grip)
-3. command=3 and execute=true (move to place)
-4. continue with remaining waypoints and release sequence
+1. Move to `SourcePosition`.
+2. Pick.
+3. Move to `TargetPosition`.
+4. Release.
 
-This keeps the operation interface stable while waypoint logic stays in the station controller.
+The station and both positions remain explicit throughout delegation.
 
 ## BaSyx Allowlist Requirement
 

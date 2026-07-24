@@ -60,7 +60,7 @@ public class MqttCommandBridgeService implements MqttCallback {
     @Value("${bridge.station.bindings:}")
     private String stationBindingsRaw;
 
-    @Value("${bridge.station.bindings-file:}")
+    @Value("${STATION_REGISTRY_FILE:}")
     private String stationBindingsFile;
 
     @Value("${bridge.invoke.timeout-ms:8000}")
@@ -87,10 +87,7 @@ public class MqttCommandBridgeService implements MqttCallback {
     @Value("${bridge.invoke.robot.move-box-url:}")
     private String moveBoxInvokeUrl;
 
-    @Value("${bridge.invoke.robot.move-box-idshort:moveBox}")
-    private String moveBoxIdShort;
-
-    @Value("${bridge.invoke.robot.move-box-operation-idshort:MoveBox}")
+    @Value("${bridge.invoke.robot.move-box-operation-idshort:ExecuteMoveBox}")
     private String moveBoxOperationIdShort;
 
     @Value("${bridge.invoke.robot.move-to-home-url:}")
@@ -99,7 +96,7 @@ public class MqttCommandBridgeService implements MqttCallback {
     @Value("${bridge.invoke.robot.move-to-home-idshort:moveToHome}")
     private String moveToHomeIdShort;
 
-    @Value("${bridge.invoke.robot.move-to-home-operation-idshort:MoveToHome}")
+    @Value("${bridge.invoke.robot.move-to-home-operation-idshort:ExecuteMoveToHome}")
     private String moveToHomeOperationIdShort;
 
     private final ObjectMapper mapper = new ObjectMapper();
@@ -149,7 +146,7 @@ public class MqttCommandBridgeService implements MqttCallback {
     @Override
     public void messageArrived(String topic, MqttMessage message) {
         String payload = new String(message.getPayload(), StandardCharsets.UTF_8).trim();
-        logger.info("Received MQTT command on {} payload={}", topic, payload);
+        logger.info("Received MQTT command on {}", topic);
 
         TopicRoute route = parseTopicRoute(topic);
         if (route == null) {
@@ -240,24 +237,20 @@ public class MqttCommandBridgeService implements MqttCallback {
         if (invokeUrl == null || invokeUrl.isBlank()) {
             logger.warn("No moveBox invoke URL resolved for station '{}'", route.stationId);
             return;
-        }s
+        }
 
         String requestId = extractRequestId(payload);
-        String conveyor;
-        String pallet;
+        String sourcePosition;
+        String targetPosition;
 
         try {
             JsonNode node = mapper.readTree(payload);
-            
-            // Match the loose fallback extraction logic used in your controller
-            conveyor = node.has("conveyor") ? node.get("conveyor").asText() : 
-                    node.has("Conveyor1") ? node.get("Conveyor1").asText() : "";
-                    
-            pallet = node.has("pallet") ? node.get("pallet").asText() : 
-                    node.has("Pallet1") ? node.get("Pallet1").asText() : "";
+            sourcePosition = extractMoveBoxParameter(node, "SourcePosition");
+            targetPosition = extractMoveBoxParameter(node, "TargetPosition");
 
-            if (conveyor.isBlank() || pallet.isBlank()) {
-                throw new IllegalArgumentException("Missing required parameters: conveyor/Conveyor1 or pallet/Pallet1");
+            if (sourcePosition.isBlank() || targetPosition.isBlank()) {
+                throw new IllegalArgumentException(
+                        "Missing required parameters: SourcePosition and TargetPosition");
             }
         } catch (Exception e) {
             logger.error("Invalid movebox command payload", e);
@@ -266,8 +259,7 @@ public class MqttCommandBridgeService implements MqttCallback {
         }
 
         try {
-            // Build an HTTP request with multiple input arguments
-            String body = buildMultiInvokeRequest(moveBoxIdShort, conveyor, pallet);
+            String body = buildMoveBoxInvokeRequest(route.stationId, sourcePosition, targetPosition);
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(invokeUrl))
@@ -440,32 +432,29 @@ public class MqttCommandBridgeService implements MqttCallback {
             return;
         }
 
-        root.fields().forEachRemaining(entry -> {
-            String stationId = entry.getKey();
+        JsonNode registryStations = root.get("stations");
+        if (registryStations == null || !registryStations.isObject()) {
+            logger.warn("Ignoring station bindings from {}: expected a 'stations' object", sourceName);
+            return;
+        }
+
+        registryStations.fields().forEachRemaining(entry -> {
             JsonNode value = entry.getValue();
+            String stationId = entry.getKey();
 
-            String conveyor = null;
-            String robot = null;
-
-            if (value.isTextual()) {
-                String[] ids = value.asText().split("\\|", 2);
-                conveyor = ids[0].trim();
-                robot = ids.length > 1 ? ids[1].trim() : conveyor;
-            } else if (value.isObject()) {
-                JsonNode conveyorNode = value.get("conveyorSubmodelB64");
-                JsonNode robotNode = value.get("robotSubmodelB64");
-                if (conveyorNode != null && conveyorNode.isTextual()) {
-                    conveyor = conveyorNode.asText().trim();
-                }
-                if (robotNode != null && robotNode.isTextual()) {
-                    robot = robotNode.asText().trim();
-                }
-                if ((robot == null || robot.isBlank()) && conveyor != null) {
-                    robot = conveyor;
-                }
+            if (!value.isObject()) {
+                logger.warn("Ignoring malformed station binding for key '{}' in {}", stationId, sourceName);
+                return;
             }
 
-            if (stationId == null || stationId.isBlank() || conveyor == null || conveyor.isBlank()) {
+            String configuredStationId = textValue(value, "stationId");
+            if (!configuredStationId.isEmpty()) {
+                stationId = configuredStationId;
+            }
+
+            String conveyor = textValue(value, "conveyorOperationsSubmodelB64");
+            String robot = textValue(value, "robotSkillsSubmodelB64");
+            if (stationId == null || stationId.isBlank() || conveyor.isBlank() || robot.isBlank()) {
                 logger.warn("Ignoring malformed station binding for key '{}' in {}", stationId, sourceName);
                 return;
             }
@@ -514,31 +503,48 @@ public class MqttCommandBridgeService implements MqttCallback {
         return root.toString();
     }
 
-    private String buildMultiInvokeRequest(String idShort, String conveyor, String pallet) {
+    private String buildMoveBoxInvokeRequest(
+            String stationId,
+            String sourcePosition,
+            String targetPosition) {
         ObjectNode root = mapper.createObjectNode();
         ArrayNode inputArguments = root.putArray("inputArguments");
 
-        // Argument 1: Conveyor
-        ObjectNode wrapper1 = inputArguments.addObject();
-        ObjectNode valueNode1 = wrapper1.putObject("value");
-        valueNode1.put("modelType", "Property");
-        valueNode1.put("idShort", "Conveyor1");
-        valueNode1.put("valueType", "xs:string");
-        valueNode1.put("value", conveyor);
-
-        // Argument 2: Pallet
-        ObjectNode wrapper2 = inputArguments.addObject();
-        ObjectNode valueNode2 = wrapper2.putObject("value");
-        valueNode2.put("modelType", "Property");
-        valueNode2.put("idShort", "Pallet1");
-        valueNode2.put("valueType", "xs:string");
-        valueNode2.put("value", pallet);
+        addStringInputArgument(inputArguments, "StationId", stationId);
+        addStringInputArgument(inputArguments, "SourcePosition", sourcePosition);
+        addStringInputArgument(inputArguments, "TargetPosition", targetPosition);
 
         root.putArray("inoutputArguments");
         root.put("requestedTimeout", timeoutMs);
 
         return root.toString();
-   }
+    }
+
+    private void addStringInputArgument(ArrayNode inputArguments, String idShort, String value) {
+        ObjectNode wrapper = inputArguments.addObject();
+        ObjectNode valueNode = wrapper.putObject("value");
+        valueNode.put("modelType", "Property");
+        valueNode.put("idShort", idShort);
+        valueNode.put("valueType", "xs:string");
+        valueNode.put("value", value);
+    }
+
+    private String extractMoveBoxParameter(JsonNode root, String fieldName) {
+        String value = textValue(root, fieldName);
+        if (!value.isEmpty()) {
+            return value;
+        }
+        JsonNode params = root.path("params");
+        return params.isObject() ? textValue(params, fieldName) : "";
+    }
+
+    private String textValue(JsonNode node, String fieldName) {
+        JsonNode value = node.get(fieldName);
+        if (value != null && !value.isNull()) {
+            return value.asText("").trim();
+        }
+        return "";
+    }
 
     private String extractRequestId(String payload) {
         try {

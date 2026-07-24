@@ -94,9 +94,9 @@ services:
       - BRIDGE_MQTT_COMMAND_PREFIX=oip/command
       - BRIDGE_MQTT_REPLY_TOPIC_PREFIX=oip/reply
       - BRIDGE_AAS_BASE_URL=http://aas-env:8081
-      - BRIDGE_STATION_BINDINGS_FILE=/config/stations.json
+      - STATION_REGISTRY_FILE=/config/stations.json
     volumes:
-      - ./mqtt-operation-bridge/stations.json:/config/stations.json:ro
+      - ./stations.json:/config/stations.json:ro
     ports:
       - '8091:8091'
     restart: always
@@ -183,11 +183,11 @@ services:
       - MQTT_DYNAMIC_TELEMETRY_TOPIC=factory/+/telemetry/+
       - MQTT_MANIFEST_TOPIC=factory/+/manifest
       - BASYX_BASE_URL=http://aas-env:8081
-      - TELEMETRY_BINDINGS_FILE=/config/bindings.json
+      - STATION_REGISTRY_FILE=/config/stations.json
       - STATION_QUEUE_SIZE=1000
       - EVENT_DEDUP_WINDOW=4096
     volumes:
-      - ./mqtt-aas-bridge/bindings.json:/config/bindings.json:ro
+      - ./stations.json:/config/stations.json:ro
     restart: always
     depends_on:
       mosquitto:
@@ -208,20 +208,14 @@ services:
       - MQTT_TOPIC=sm-repository/+/submodels/+/submodelElements/+/updated
       - OPERATION_REPLY_TOPIC=simulation/+/replies/+
       - HTTP_TIMEOUT_SECONDS=8
-      - ROBOT_SETTLE_TIMEOUT_SECONDS=45
-      - ROBOT_STATUS_POLL_SECONDS=0.4
-      - ROBOT_MOTION_START_GRACE_SECONDS=5.0
-      - SENSOR_TRUE_REARM_SECONDS=2.0
-      - ROBOT_BINDINGS_FILE=/config/robot_bindings.json
-      - STATION_BINDINGS_FILE=/config/aasserver.json
+      - STATION_REGISTRY_FILE=/config/stations.json
       - ORCHESTRATOR_LOG_CSV_PATH=/app/orchestrator_logs.csv
       - ORCHESTRATOR_SUMMARY_CSV_PATH=/app/orchestrator_summary.csv
       - SUMMARY_BATCH_SIZE=5
     volumes:
       - ../orchestrator_logs.csv:/app/orchestrator_logs.csv
       - ../orchestrator_summary.csv:/app/orchestrator_summary.csv
-      - ./python-agent/robot_bindings.json:/config/robot_bindings.json:ro
-      - ./databridge/aasserver.json:/config/aasserver.json:ro
+      - ./stations.json:/config/stations.json:ro
 
     restart: always
     depends_on:

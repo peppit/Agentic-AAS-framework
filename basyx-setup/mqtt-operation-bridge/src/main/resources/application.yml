@@ -6,7 +6,6 @@ bridge:
     base-url: http://aas-env:8081
   station:
     bindings: ""
-    bindings-file: ""
   mqtt:
     broker-url: tcp://mosquitto:1883
     client-id: mqtt-operation-bridge
@@ -25,11 +24,10 @@ bridge:
       speed-operation-idshort: Speed
     robot:
       move-box-url: ""
-      move-box-idshort: moveBox
-      move-box-operation-idshort: MoveBox
+      move-box-operation-idshort: ExecuteMoveBox
       move-to-home-url: ""
       move-to-home-idshort: moveToHome
-      move-to-home-operation-idshort: MoveToHome
+      move-to-home-operation-idshort: ExecuteMoveToHome
 
 logging:
   level:

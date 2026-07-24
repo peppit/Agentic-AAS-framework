@@ -60,11 +60,12 @@ BaSyx delegation allowlist is configured in [basyx/aas-env.properties](basyx/aas
 
 The mqtt-operation-bridge service supports MQTT-first command flow:
 
-1. Subscribes to oip/command/conveyorbelt/+.
+1. Subscribes to `oip/command/+/+`.
 2. Invokes AAS operation endpoints via aas-env.
-3. Publishes replies to oip/reply/conveyorbelt.
+3. Publishes replies to `oip/reply/{stationId}/{operation}`.
 
-Bridge invoke URLs are configured in [docker-compose.yml](docker-compose.yml). Conveyor running/speed are enabled by default. Robot moveBox/moveToHome URLs are optional and can be enabled by adding corresponding bridge env vars.
+The bridge resolves station-specific operation submodels from
+[stations.json](stations.json).
 
 ## Python Agent (Event-Driven Robot Orchestration)
 
@@ -83,9 +84,35 @@ Key python-agent environment variables (see [docker-compose.yml](docker-compose.
 
 1. BASYX_BASE_URL
 2. MQTT_HOST / MQTT_PORT / MQTT_TOPIC / OPERATION_REPLY_TOPIC
-3. ROBOT_SUBMODEL_BINDINGS (preferred): stateSubmodelId|skillsSubmodelId[,state|skills...]
-4. ROBOT_SETTLE_TIMEOUT_SECONDS, ROBOT_STATUS_POLL_SECONDS, ROBOT_MOTION_START_GRACE_SECONDS
-5. SENSOR_TRUE_REARM_SECONDS
+3. STATION_REGISTRY_FILE
+4. JOB_TIMEOUT_SECONDS / INVOKE_RETRY_COUNT
+
+The registry variable points to the shared `stations.json` file in the default
+Compose setup.
+
+## Add a Station
+
+[stations.json](stations.json) is the canonical runtime registry used by the
+simulation manifest publisher, telemetry bridge, MQTT operation bridge, and
+orchestrator. Station identifiers are explicit and may use any name; there is
+no positional or `station_01`/`station_02` inference.
+
+To add a station:
+
+1. Add one entry below `stations` with a unique `stationId` and the station's
+   conveyor telemetry, conveyor operations, robot state, and robot skills
+   submodel IDs.
+2. Add or upload the corresponding conveyor AASX. Add a robot AASX only when the
+   station introduces a new robot.
+3. Add a `SupportedCapabilities` route for the station to a robot skills
+   submodel.
+4. Add the station to the OIP scene and map its OPC UA tags.
+5. Restart `server.py` and the services that cache registry data:
+   `python-agent` and `mqtt-operation-bridge`.
+
+When `STATION_IDS` is unset, `server.py` creates every station declared in the
+registry. Set `STATION_IDS` to a comma-separated subset to run only selected
+stations.
 
 ## Include Your Own Asset Administration Shells
 

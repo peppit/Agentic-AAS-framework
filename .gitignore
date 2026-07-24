@@ -2,3 +2,7 @@
 OIP_server_logs.csv
 orchestrator_logs.csv
 orchestrator_summary.csv
+
+# Python bytecode and interpreter caches
+__pycache__/
+*.py[cod]

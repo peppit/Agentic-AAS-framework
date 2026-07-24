@@ -16,9 +16,10 @@ and target element `idShort` values. The gateway validates the manifest, creates
 a bounded FIFO queue for that station, and starts processing immediately. No
 gateway restart or copied JSONata route is required.
 
-`manifests.json` contains the manifests published by the current simulation
-server. `bindings.json` remains an optional bootstrap fallback, allowing existing
-stations to work before their retained manifests have been published.
+The top-level `stations.json` is the canonical registry. The simulation server
+converts each active registry entry into a retained manifest. The same registry
+is mounted as the gateway's bootstrap binding file, allowing stations to work
+before their retained manifests have been received.
 
 ## Telemetry
 

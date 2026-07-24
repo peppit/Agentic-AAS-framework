@@ -42,7 +42,6 @@ public class SimulationMachineOperationController {
             @RequestBody String input,
             @PathVariable(value = "stationId", required = false) String stationIdFromPath) {
         logger.info("Executing generic simulation operation");
-        logger.debug("Input received: {}", input);
 
         try {
             JsonObject root = parseInputRoot(input);
@@ -79,7 +78,6 @@ public class SimulationMachineOperationController {
             @RequestBody String input,
             @PathVariable(value = "stationId", required = false) String stationIdFromPath) {
         logger.info("Executing conveyor running operation");
-        logger.debug("Input received: {}", input);
 
         try {
             JsonObject root = parseInputRoot(input);
@@ -110,7 +108,6 @@ public class SimulationMachineOperationController {
             @RequestBody String input,
             @PathVariable(value = "stationId", required = false) String stationIdFromPath) {
         logger.info("Executing conveyor speed operation");
-        logger.debug("Input received: {}", input);
 
         try {
             JsonObject root = parseInputRoot(input);
@@ -135,41 +132,45 @@ public class SimulationMachineOperationController {
     }
 
         @PostMapping(
-            value = {"/simulation/stations/{stationId}/robot/movebox"},
+            value = "/simulation/robot/movebox",
             produces = MediaType.APPLICATION_JSON_VALUE)
         public ResponseEntity<Map<String, Object>> moveBox(
-            @RequestBody String input,
-            @PathVariable(value = "stationId", required = false) String stationIdFromPath) {
+            @RequestBody String input) {
         logger.info("Executing robot MoveBox operation");
-        logger.debug("Input received: {}", input);
 
         try {
             JsonObject root = parseInputRoot(input);
             String requestId = extractRequestId(root, input);
-            String stationId = extractRequiredStationId(root, stationIdFromPath);
+            String stationId = extractMoveBoxStationId(root);
             JsonObject extractedParams = extractParams(root);
-            String conveyor = extractStringParameterAny(root, null, "Conveyor1", "conveyor1", "Conveyor", "conveyor", "SourcePosition", "sourcePosition") ;
-            if (conveyor == null || conveyor.isBlank()) {
-                conveyor = extractStringFromParams(extractedParams, "Conveyor1", "conveyor1", "Conveyor", "conveyor", "SourcePosition", "sourcePosition", "SourcePosition.");
+            String sourcePosition = extractStringParameterAny(root, null, "SourcePosition");
+            if (sourcePosition == null || sourcePosition.isBlank()) {
+                sourcePosition = extractStringFromParams(extractedParams, "SourcePosition");
             }
 
-            String pallet = extractStringParameterAny(root, null, "Pallet1", "pallet1", "Pallet", "pallet", "TargetPosition", "targetPosition") ;
-            if (pallet == null || pallet.isBlank()) {
-                pallet = extractStringFromParams(extractedParams, "Pallet1", "pallet1", "Pallet", "pallet", "TargetPosition", "targetPosition", "TargetPosition.");
+            String targetPosition = extractStringParameterAny(root, null, "TargetPosition");
+            if (targetPosition == null || targetPosition.isBlank()) {
+                targetPosition = extractStringFromParams(extractedParams, "TargetPosition");
             }
 
-            if (conveyor == null || conveyor.isBlank()) {
-                throw new IllegalArgumentException("Missing required parameter: Conveyor1");
+            if (sourcePosition == null || sourcePosition.isBlank()) {
+                throw new IllegalArgumentException("Missing required parameter: SourcePosition");
             }
-            if (pallet == null || pallet.isBlank()) {
-                throw new IllegalArgumentException("Missing required parameter: Pallet1");
+            if (targetPosition == null || targetPosition.isBlank()) {
+                throw new IllegalArgumentException("Missing required parameter: TargetPosition");
             }
 
             JsonObject params = new JsonObject();
-            params.addProperty("Conveyor1", conveyor);
-            params.addProperty("Pallet1", pallet);
+            params.addProperty("SourcePosition", sourcePosition);
+            params.addProperty("TargetPosition", targetPosition);
 
             String operation = "moveBox";
+            logger.info(
+                "Publishing {} for station={} source={} target={}",
+                operation,
+                stationId,
+                sourcePosition,
+                targetPosition);
             String payload = buildGenericCommandPayload(requestId, stationId, operation, params);
             mqttPublisher.publishStationOperation(stationId, operation, payload);
 
@@ -179,8 +180,8 @@ public class SimulationMachineOperationController {
             response.put("requestId", requestId);
             response.put("stationId", stationId);
             response.put("operation", operation);
-            response.put("Conveyor1", conveyor);
-            response.put("Pallet1", pallet);
+            response.put("SourcePosition", sourcePosition);
+            response.put("TargetPosition", targetPosition);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             logger.error("Error executing robot MoveBox operation", e);
@@ -194,7 +195,6 @@ public class SimulationMachineOperationController {
                 @RequestBody String input,
                 @PathVariable(value = "stationId", required = false) String stationIdFromPath) {
             logger.info("Executing robot move-to-home operation");
-            logger.debug("Input received: {}", input);
 
             try {
                 JsonObject root = parseInputRoot(input);
@@ -304,30 +304,18 @@ public class SimulationMachineOperationController {
             }
         }
 
-        // Fallback for accidental punctuation differences like TargetPosition.
-        JsonObject normalizedAliasMap = new JsonObject();
-        for (String key : keys) {
-            normalizedAliasMap.addProperty(normalizeIdShort(key), "1");
-        }
-
-        for (Map.Entry<String, JsonElement> entry : params.entrySet()) {
-            String normalized = normalizeIdShort(entry.getKey());
-            if (!normalizedAliasMap.has(normalized)) {
-                continue;
-            }
-
-            JsonElement value = entry.getValue();
-            if (value == null || value.isJsonNull() || !value.isJsonPrimitive()) {
-                continue;
-            }
-
-            String text = value.getAsString();
-            if (text != null && !text.isBlank()) {
-                return text;
-            }
-        }
-
         return null;
+    }
+
+    private String extractMoveBoxStationId(JsonObject root) {
+        String stationId = extractStringParameterAny(root, null, "StationId");
+        if (stationId == null || stationId.isBlank()) {
+            stationId = extractStringFromParams(extractParams(root), "StationId");
+        }
+        if (stationId != null && !stationId.isBlank()) {
+            return stationId;
+        }
+        throw new IllegalArgumentException("Missing required parameter: StationId");
     }
 
     private String extractRequiredStationId(JsonObject root, String stationIdFromPath) {
@@ -349,20 +337,6 @@ public class SimulationMachineOperationController {
         throw new IllegalArgumentException("Missing required parameter: stationId");
     }
 
-    private String normalizeIdShort(String raw) {
-        if (raw == null) {
-            return "";
-        }
-
-        StringBuilder normalized = new StringBuilder();
-        for (char c : raw.toCharArray()) {
-            if (Character.isLetterOrDigit(c)) {
-                normalized.append(Character.toLowerCase(c));
-            }
-        }
-        return normalized.toString();
-    }
-
     private JsonObject extractParams(JsonObject root) {
         JsonElement paramsElement = findInputValue(root, "params");
         if (paramsElement != null && paramsElement.isJsonObject()) {
@@ -370,10 +344,7 @@ public class SimulationMachineOperationController {
         }
 
         JsonObject params = new JsonObject();
-        JsonArray vars = null;
-        if (root.has("inputVariables") && root.get("inputVariables").isJsonArray()) {
-            vars = root.getAsJsonArray("inputVariables");
-        }
+        JsonArray vars = findArgumentArray(root);
 
         if (vars == null) {
             return params;
@@ -412,11 +383,11 @@ public class SimulationMachineOperationController {
             return root.get(key);
         }
 
-        if (!root.has("inputVariables") || !root.get("inputVariables").isJsonArray()) {
+        JsonArray vars = findArgumentArray(root);
+        if (vars == null) {
             return null;
         }
 
-        JsonArray vars = root.getAsJsonArray("inputVariables");
         for (JsonElement elem : vars) {
             if (!elem.isJsonObject()) {
                 continue;
@@ -434,6 +405,16 @@ public class SimulationMachineOperationController {
             }
         }
 
+        return null;
+    }
+
+    private JsonArray findArgumentArray(JsonObject root) {
+        if (root.has("inputVariables") && root.get("inputVariables").isJsonArray()) {
+            return root.getAsJsonArray("inputVariables");
+        }
+        if (root.has("inputArguments") && root.get("inputArguments").isJsonArray()) {
+            return root.getAsJsonArray("inputArguments");
+        }
         return null;
     }
 

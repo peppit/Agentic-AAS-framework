@@ -90,7 +90,7 @@ public class MqttCommandPublisherService {
         MqttMessage message = new MqttMessage(payload.getBytes(StandardCharsets.UTF_8));
         message.setQos(qos);
         client.publish(topic, message);
-        logger.info("Published simulation command to topic {} payload={}", topic, payload);
+        logger.info("Published simulation command to topic {}", topic);
     }
 
     private void ensureConnected() throws Exception {
