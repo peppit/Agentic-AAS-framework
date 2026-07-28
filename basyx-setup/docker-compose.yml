@@ -49,6 +49,7 @@ services:
       mongo:
         condition: service_healthy
   aas-web-ui:
+    profiles: ["demo"]
     image: eclipsebasyx/aas-gui:SNAPSHOT
     container_name: aas-ui
     ports:
@@ -88,6 +89,7 @@ services:
       context: ./mqtt-operation-bridge
       dockerfile: Dockerfile
     container_name: mqtt-operation-bridge
+    profiles: ["mqtt-first"]
     environment:
       - BRIDGE_MQTT_BROKER_URL=tcp://mosquitto:1883
       - BRIDGE_MQTT_TOPIC_FILTER=oip/command/+/+
@@ -107,6 +109,7 @@ services:
         condition: service_healthy
 
   aas-discovery:
+    profiles: ["demo"]
     image: eclipsebasyx/aas-discovery:2.0.0-SNAPSHOT
     container_name: aas-discovery
     environment:
@@ -148,6 +151,7 @@ services:
       start_period: 1s
       retries: 3
   dashboard-api:
+    profiles: ["demo"]
     image: aaronzi/basyx-dashboard-api:SNAPSHOT_02
     container_name: dashboard-api
     ports:

@@ -1,34 +1,49 @@
 # BaSyx Operation Delegation for OPI Simulation
 
-This setup uses BaSyx Operation Delegation to route operation invocations from AAS to simulation commands over MQTT.
+This setup uses BaSyx Operation Delegation to route operations selected by the
+orchestration agent from AAS to simulation commands over MQTT.
 
 ## Purpose
 
-When an operation is invoked in AAS Web UI (or over REST), BaSyx forwards the call to the delegated HTTP endpoint configured in the operation qualifier. In this setup, the delegated service is a Spring Boot app that publishes MQTT commands for the OPI simulation stack.
+The orchestration agent discovers capabilities in robot AAS submodels and
+invokes the selected standardized AAS Operation. BaSyx forwards the call to the
+HTTP endpoint configured in the operation qualifier. The delegated Spring Boot
+service then publishes the controller-facing MQTT command for the OPI
+simulation stack.
 
-## Runtime Architecture
-
-```text
-AAS Web UI / REST
-        |
-        v
-BaSyx AAS Environment (operation delegation)
-        |
-        v
-operation-delegation-service (HTTP delegation target)
-        |
-        v
-Mosquitto MQTT
-        |
-        v
-Simulation listener (for example Python asyncua/aiomqtt)
-```
-
-In addition, there is a reverse bridge path for MQTT-first control:
+## Primary Runtime Architecture
 
 ```text
-MQTT command topic -> mqtt-operation-bridge -> AAS operation invoke endpoint
+Sensor event
+→ Python orchestration agent
+→ AAS Operation invocation
+→ operation-delegation-service
+→ MQTT command
+→ simulation robot/controller
+→ MQTT completion or fault
+→ Python orchestration agent
 ```
+
+```mermaid
+sequenceDiagram
+    participant Sensor
+    participant Agent as Orchestration agent
+    participant AAS as Robot AAS
+    participant Adapter as Delegation adapter
+    participant Robot as Robot/controller
+
+    Sensor-->>Agent: Station event
+    Agent->>Agent: Match and reserve robot
+    Agent->>AAS: Invoke AAS Operation
+    AAS->>Adapter: Delegated request
+    Adapter->>Robot: MQTT command
+    Robot-->>Agent: Completion or fault
+    Agent->>Agent: Finalize and release
+```
+
+This is the official command path. The agent commands robots through AAS
+Operations; MQTT is the implementation-level connection between the delegation
+adapter and the controller.
 
 ## Delegation Endpoints in operation-delegation-service
 
@@ -128,7 +143,7 @@ Without this, delegation may fail with HTTP 424 and blocked private address erro
 1. Start stack:
 
 ```powershell
-docker compose up -d
+docker compose --profile demo up -d
 ```
 
 2. Test delegated endpoints directly:
@@ -145,17 +160,39 @@ Invoke-RestMethod -Uri "http://localhost:8087/simulation/stations/Station_01/con
 ```powershell
 docker logs -f aas-env
 docker logs -f operation-delegation-service
-docker logs -f mqtt-operation-bridge
 docker logs -f mosquitto
 ```
 
-## MQTT Operation Bridge Notes
+When the optional `mqtt-first` profile is enabled, inspect its adapter
+separately with `docker logs -f mqtt-operation-bridge`.
 
-The bridge service in [mqtt-operation-bridge/README.md](mqtt-operation-bridge/README.md) listens to OIP command topics and calls AAS operation invoke endpoints:
+## Optional MQTT-First Adapter
 
-1. Topic filter: oip/command/conveyorbelt/+
-2. Running invoke URL and Speed invoke URL are set in docker-compose environment variables.
-3. Replies are published under oip/reply/conveyorbelt.
+The bridge service in
+[mqtt-operation-bridge/README.md](mqtt-operation-bridge/README.md) is intended
+for external systems that already issue MQTT commands. It is not required by
+the primary agent architecture.
+
+```text
+External MQTT command
+→ mqtt-operation-bridge
+→ AAS Operation invocation
+→ operation-delegation-service
+→ MQTT command
+→ controller
+```
+
+The bridge listens to `oip/command/{stationId}/{action}`, invokes the
+station-specific AAS Operation, and publishes its interoperability reply under
+`oip/reply/{stationId}/{operation}`. Enable it explicitly:
+
+```powershell
+docker compose --profile mqtt-first up -d
+```
+
+Do not interpret the MQTT-first input and the controller-facing MQTT output as
+one circular command flow. They are separate boundaries used only when an
+external MQTT producer activates the optional adapter.
 
 ## Troubleshooting
 
@@ -172,7 +209,13 @@ The bridge service in [mqtt-operation-bridge/README.md](mqtt-operation-bridge/RE
    Rebuild service image:
 
 ```powershell
-docker compose up -d --build operation-delegation-service mqtt-operation-bridge
+docker compose up -d --build operation-delegation-service
+```
+
+For the optional bridge, include its profile:
+
+```powershell
+docker compose --profile mqtt-first up -d --build mqtt-operation-bridge
 ```
 
 ## Related Files

@@ -59,7 +59,7 @@ suppression.
 - Retained manifests allow the gateway to reconstruct discovery state after a
   restart.
 
-Start the default gateway:
+Start the gateway as part of the execution profile:
 
 ```powershell
 docker compose up -d --build mqtt-aas-bridge

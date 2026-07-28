@@ -1,8 +1,78 @@
 # BaSyx Setup for OPI Simulation
 
-This folder contains the Docker-based BaSyx setup used for OPI Simulation with MQTT-based operation delegation.
+This folder contains the Docker-based BaSyx setup used for agent-driven OPI
+Simulation with AAS Operation delegation.
 
 Prerequisite: Docker Desktop (or Docker Engine with Compose plugin) is installed.
+
+## Architecture
+
+### Primary command path
+
+The central orchestration agent receives station events, matches the requested
+job against robot capabilities described in AAS submodels, reserves the
+selected robot, and invokes its AAS Operation. The operation-delegation service
+translates the AAS invocation into the controller-facing MQTT command.
+Completion and fault messages are correlated with the lifecycle using the
+request ID.
+
+```text
+Sensor event
+→ Python orchestration agent
+→ AAS Operation invocation
+→ operation-delegation-service
+→ MQTT command
+→ simulation robot/controller
+→ MQTT completion or fault
+→ Python orchestration agent
+```
+
+```mermaid
+sequenceDiagram
+    participant Sensor
+    participant Agent as Orchestration agent
+    participant AAS as Robot AAS
+    participant Adapter as Delegation adapter
+    participant Robot as Robot/controller
+
+    Sensor-->>Agent: Station event
+    Agent->>Agent: Match and reserve robot
+    Agent->>AAS: Invoke AAS Operation
+    AAS->>Adapter: Delegated request
+    Adapter->>Robot: MQTT command
+    Robot-->>Agent: Completion or fault
+    Agent->>Agent: Finalize and release
+```
+
+The agent-to-AAS direction is the official command path for this demonstrator.
+MQTT is the implementation-level controller interface after the standardized
+AAS Operation has been selected and invoked.
+
+### Optional adapters
+
+The demonstrator also includes adapters for systems that enter through other
+industrial interfaces. These are interoperability options and are not part of
+the normal primary execution sequence
+| Adapter | Use case | Required for primary architecture? |
+|---|---|---:|
+| AAS-to-MQTT delegation | Connect AAS Operations to the simulated/controller interface | Yes |
+| MQTT-to-AAS bridge | Allow existing MQTT producers to invoke operations through the AAS | No |
+| OPC UA adapter | Connect PLC/controller environments where OPC UA is preferred | No; not used by the current primary path |
+
+The optional MQTT-first route is:
+
+```text
+External MQTT command
+→ mqtt-operation-bridge
+→ AAS Operation invocation
+→ operation-delegation-service
+→ MQTT command
+→ controller
+```
+
+Use this route only when an external system already produces MQTT commands and
+cannot initially use the agent/AAS entry point. It does not run alongside the
+primary path as a required return channel.
 
 ## Configuration
 
@@ -21,51 +91,61 @@ Then edit .env and set values:
 
 The .env file is excluded from git via .gitignore.
 
-## Start the Stack
+## Deployment Modes
 
 1. Clone or extract the repository on your device.
 2. Create and populate .env as described above.
 3. Open a terminal and navigate to the folder.
-4. Start all services:
 
-```
+The default Compose deployment is the execution-only `edge-minimal` mode.
+The `demo` profile adds presentation and diagnostic services.
+
+| Mode | Activation | Purpose |
+|---|---|---|
+| `edge-minimal` | Default, no profile required | Smallest stack that executes the primary command path |
+| `demo` | `demo` profile | Adds the AAS Web UI, dashboard API, and AAS discovery |
+
+Start only the execution components:
+
+```powershell
 docker compose up -d
+```
+
+Start the full demonstrator:
+
+```powershell
+docker compose --profile demo up -d
+```
+
+The MQTT-first bridge remains a separate add-on. Enable it only when testing an
+external MQTT producer:
+
+```powershell
+docker compose --profile mqtt-first up -d
 ```
 
 ## Available Services
 
+Execution services included in both modes:
+
 - AAS Environment: [http://localhost:8081](http://localhost:8081)
 - AAS Registry: [http://localhost:8082](http://localhost:8082)
 - Submodel Registry: [http://localhost:8083](http://localhost:8083)
+- Operation Delegation Service: [http://localhost:8087](http://localhost:8087)
+- Mosquitto MQTT Broker: localhost:1883
+- Python Agent: background worker (no public HTTP port)
+- MQTT-to-AAS telemetry bridge: background worker (no public HTTP port)
+
+Additional `demo` services:
+
 - AAS Discovery: [http://localhost:8084](http://localhost:8084)
 - AAS Web UI: [http://localhost:3000](http://localhost:3000)
 - Dashboard API: [http://localhost:8085](http://localhost:8085)
-- Operation Delegation Service: [http://localhost:8087](http://localhost:8087)
-- MQTT Operation Bridge: [http://localhost:8091](http://localhost:8091)
-- Mosquitto MQTT Broker: localhost:1883
-- Python Agent: background worker (no public HTTP port)
 
-## OPI Simulation Delegation Flow
+Optional profile service:
 
-Current operation delegation is simulation and MQTT based:
-
-1. AAS operation invoke in UI/API.
-2. BaSyx forwards to the invocationDelegation URL at operation-delegation-service.
-3. operation-delegation-service publishes the command to MQTT topic simulation/{stationId}/operations/{operation}.
-4. Simulation listener consumes MQTT command and updates simulated state.
-
-BaSyx delegation allowlist is configured in [basyx/aas-env.properties](basyx/aas-env.properties) for host operation-delegation-service and port 8087.
-
-## MQTT Command Bridge
-
-The mqtt-operation-bridge service supports MQTT-first command flow:
-
-1. Subscribes to `oip/command/+/+`.
-2. Invokes AAS operation endpoints via aas-env.
-3. Publishes replies to `oip/reply/{stationId}/{operation}`.
-
-The bridge resolves station-specific operation submodels from
-[stations.json](stations.json).
+- MQTT Operation Bridge: [http://localhost:8091](http://localhost:8091),
+  enabled by the `mqtt-first` profile
 
 ## Python Agent (Event-Driven Robot Orchestration)
 
@@ -107,8 +187,8 @@ To add a station:
 3. Add a `SupportedCapabilities` route for the station to a robot skills
    submodel.
 4. Add the station to the OIP scene and map its OPC UA tags.
-5. Restart `server.py` and the services that cache registry data:
-   `python-agent` and `mqtt-operation-bridge`.
+5. Restart `server.py` and `python-agent`, which cache registry data. Restart
+   `mqtt-operation-bridge` as well only when the `mqtt-first` profile is in use.
 
 When `STATION_IDS` is unset, `server.py` creates every station declared in the
 registry. Set `STATION_IDS` to a comma-separated subset to run only selected

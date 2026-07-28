@@ -1,8 +1,18 @@
 # MQTT Operation Bridge
 
-This service subscribes to MQTT command topics and invokes BaSyx operation endpoints over HTTP.
+This optional interoperability service subscribes to commands from existing
+MQTT producers and invokes BaSyx Operation endpoints over HTTP. It is not part
+of the primary orchestration path, in which the Python agent invokes AAS
+Operations directly.
+
+Enable the bridge through its Compose profile:
+
+```powershell
+docker compose --profile mqtt-first up -d mqtt-operation-bridge
+```
 
 Current scope:
+
 - Conveyor operations `Running`, `Speed`
 - Robot operations `MoveBox`, `MoveToHome`
 
@@ -66,8 +76,8 @@ Environment variables:
 - `STATION_REGISTRY_FILE=/config/stations.json`
 - `BRIDGE_STATION_BINDINGS=station_01=<conveyorOperationsSubmodelB64>|<robotSkillsSubmodelB64>` (optional inline fallback)
 
-The default Compose setup mounts the shared top-level `stations.json`. Relevant
-fields are:
+The profiled Compose service mounts the shared top-level `stations.json`.
+Relevant fields are:
 
 ```json
 {
@@ -100,5 +110,5 @@ If a station binding is missing, the bridge falls back to static URLs (if provid
 From `basyx-setup`:
 
 ```powershell
-docker-compose up -d mqtt-operation-bridge
+docker compose --profile mqtt-first up -d mqtt-operation-bridge
 ```

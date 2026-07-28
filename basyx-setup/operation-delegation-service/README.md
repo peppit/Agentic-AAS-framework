@@ -76,12 +76,14 @@ operation-delegation-service:
 ```
 
 Start with:
-```bash
+
+```powershell
 cd ../  # Go to basyx-setup root
-docker compose up -d operation-delegation-service
+docker compose up -d
 ```
 
 ### Standalone
+
 ```bash
 mvn spring-boot:run
 ```

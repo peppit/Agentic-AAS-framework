@@ -136,7 +136,7 @@ To map multiple OPC UA nodes to different AAS properties:
 
 ```powershell
 cd c:\Users\tarkkap2\Documents\Research\workspace2\basyx-setup
-docker-compose up -d databridge
+docker compose --profile legacy-databridge up -d databridge
 ```
 
 ## Monitor Operation
