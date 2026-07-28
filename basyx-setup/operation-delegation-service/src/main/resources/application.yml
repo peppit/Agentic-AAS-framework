@@ -3,7 +3,7 @@ server:
 
 spring:
   application:
-    name: opcua-operation-service
+    name: operation-delegation-service
 
 logging:
   level:
@@ -14,6 +14,6 @@ simulation:
   mqtt:
     enabled: true
     broker-url: tcp://mosquitto:1883
-    client-id: simulation-operation-service
+    client-id: operation-delegation-service
     qos: 1
     topic-template: simulation/{stationId}/operations/{operation}

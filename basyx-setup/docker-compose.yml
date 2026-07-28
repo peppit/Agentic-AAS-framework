@@ -72,11 +72,11 @@ services:
     volumes:
       - ./logo:/usr/src/app/dist/Logo
 
-  opcua-operation-service:
+  operation-delegation-service:
     build:
-      context: ./opcua-operation-service
+      context: ./operation-delegation-service
       dockerfile: Dockerfile
-    container_name: opcua-operation-service
+    container_name: operation-delegation-service
     ports:
       - '8087:8087'
     restart: always

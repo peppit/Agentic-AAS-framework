@@ -25,7 +25,7 @@ public class MqttCommandPublisherService {
     @Value("${simulation.mqtt.broker-url:tcp://mosquitto:1883}")
     private String brokerUrl;
 
-    @Value("${simulation.mqtt.client-id:simulation-operation-service}")
+    @Value("${simulation.mqtt.client-id:operation-delegation-service}")
     private String clientId;
 
     @Value("${simulation.mqtt.qos:1}")

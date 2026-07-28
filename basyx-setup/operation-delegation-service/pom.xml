@@ -6,7 +6,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.openindustryproject</groupId>
-    <artifactId>opcua-operation-service</artifactId>
+    <artifactId>operation-delegation-service</artifactId>
     <version>1.0.0</version>
     <packaging>jar</packaging>
 

@@ -4,9 +4,9 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class OpcUaOperationServiceApplication {
+public class OperationDelegationServiceApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(OpcUaOperationServiceApplication.class, args);
+        SpringApplication.run(OperationDelegationServiceApplication.class, args);
     }
 }

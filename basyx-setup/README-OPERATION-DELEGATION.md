@@ -15,7 +15,7 @@ AAS Web UI / REST
 BaSyx AAS Environment (operation delegation)
         |
         v
-opcua-operation-service (HTTP delegation target)
+operation-delegation-service (HTTP delegation target)
         |
         v
 Mosquitto MQTT
@@ -30,7 +30,7 @@ In addition, there is a reverse bridge path for MQTT-first control:
 MQTT command topic -> mqtt-operation-bridge -> AAS operation invoke endpoint
 ```
 
-## Delegation Endpoints in opcua-operation-service
+## Delegation Endpoints in operation-delegation-service
 
 Use these HTTP endpoints as operation delegation targets:
 
@@ -42,11 +42,11 @@ Use these HTTP endpoints as operation delegation targets:
 
 Base URL from other containers:
 
-http://opcua-operation-service:8087
+http://operation-delegation-service:8087
 
 ## MQTT Topic Contract
 
-Configured in [opcua-operation-service/src/main/resources/application.yml](opcua-operation-service/src/main/resources/application.yml):
+Configured in [operation-delegation-service/src/main/resources/application.yml](operation-delegation-service/src/main/resources/application.yml):
 
 1. Topic template: simulation/{stationId}/operations/{operation}
 2. Conveyor running topic: simulation/Station_01/operations/conveyorRunning
@@ -62,7 +62,7 @@ Example qualifier for operation delegation:
 ```json
 {
   "type": "invocationDelegation",
-        "value": "http://opcua-operation-service:8087/simulation/stations/Station_01/conveyorbelt/speed"
+        "value": "http://operation-delegation-service:8087/simulation/stations/Station_01/conveyorbelt/speed"
 }
 ```
 
@@ -71,7 +71,7 @@ MoveBox qualifier example:
 ```json
 {
         "type": "invocationDelegation",
-        "value": "http://opcua-operation-service:8087/simulation/robot/movebox"
+        "value": "http://operation-delegation-service:8087/simulation/robot/movebox"
 }
 ```
 
@@ -118,7 +118,7 @@ The station and both positions remain explicit throughout delegation.
 
 BaSyx operation delegation target validation is enabled. Allowlist is configured in [basyx/aas-env.properties](basyx/aas-env.properties):
 
-1. basyx.submodelrepository.feature.operation.delegation.security.allowlist.hosts=opcua-operation-service
+1. basyx.submodelrepository.feature.operation.delegation.security.allowlist.hosts=operation-delegation-service
 2. basyx.submodelrepository.feature.operation.delegation.security.allowlist.ports=8087
 
 Without this, delegation may fail with HTTP 424 and blocked private address errors.
@@ -144,7 +144,7 @@ Invoke-RestMethod -Uri "http://localhost:8087/simulation/stations/Station_01/con
 
 ```powershell
 docker logs -f aas-env
-docker logs -f opcua-operation-service
+docker logs -f operation-delegation-service
 docker logs -f mqtt-operation-bridge
 docker logs -f mosquitto
 ```
@@ -172,7 +172,7 @@ The bridge service in [mqtt-operation-bridge/README.md](mqtt-operation-bridge/RE
    Rebuild service image:
 
 ```powershell
-docker compose up -d --build opcua-operation-service mqtt-operation-bridge
+docker compose up -d --build operation-delegation-service mqtt-operation-bridge
 ```
 
 ## Related Files
@@ -180,5 +180,5 @@ docker compose up -d --build opcua-operation-service mqtt-operation-bridge
 1. [README.md](README.md)
 2. [docker-compose.yml](docker-compose.yml)
 3. [basyx/aas-env.properties](basyx/aas-env.properties)
-4. [opcua-operation-service/src/main/resources/application.yml](opcua-operation-service/src/main/resources/application.yml)
+4. [operation-delegation-service/src/main/resources/application.yml](operation-delegation-service/src/main/resources/application.yml)
 5. [mqtt-operation-bridge/README.md](mqtt-operation-bridge/README.md)

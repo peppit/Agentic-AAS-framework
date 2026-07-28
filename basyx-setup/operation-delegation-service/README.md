@@ -16,7 +16,7 @@ AAS Web UI → BaSyx Environment → Operation Delegation → This Service → O
 
 1. **AAS Operation Definition**: Operations in the AASX file have a `Qualifier` with:
    - `type`: `"invocationDelegation"`
-   - `value`: `"http://opcua-operation-service:8087/crane/hoist-down"` (service URL)
+   - `value`: `"http://operation-delegation-service:8087/crane/hoist-down"` (service URL)
 
 2. **BaSyx Delegation**: When operation is invoked, BaSyx checks for the delegation qualifier and forwards the request
 
@@ -52,12 +52,12 @@ opcua:
 ### Standalone JAR
 ```bash
 mvn clean package
-java -jar target/opcua-operation-service-1.0.0.jar
+java -jar target/operation-delegation-service-1.0.0.jar
 ```
 
 ### Docker Image
 ```bash
-docker build -t opcua-operation-service:1.0.0 .
+docker build -t operation-delegation-service:1.0.0 .
 ```
 
 ## Running
@@ -66,10 +66,10 @@ docker build -t opcua-operation-service:1.0.0 .
 The service is already configured in the main `docker-compose.yml`:
 
 ```yaml
-opcua-operation-service:
+operation-delegation-service:
   build:
-    context: ./opcua-operation-service
-  container_name: opcua-operation-service
+    context: ./operation-delegation-service
+  container_name: operation-delegation-service
   ports:
     - '8087:8087'
   restart: always
@@ -78,7 +78,7 @@ opcua-operation-service:
 Start with:
 ```bash
 cd ../  # Go to basyx-setup root
-docker-compose up -d opcua-operation-service
+docker compose up -d operation-delegation-service
 ```
 
 ### Standalone
@@ -150,7 +150,7 @@ To enable operation delegation in your AASX file, add operations with delegation
   "qualifiers": [
     {
       "type": "invocationDelegation",
-      "value": "http://opcua-operation-service:8087/crane/hoist-down"
+      "value": "http://operation-delegation-service:8087/crane/hoist-down"
     }
   ],
   "inputVariables": [
@@ -224,7 +224,7 @@ To enable operation delegation in your AASX file, add operations with delegation
 
 Check logs:
 ```bash
-docker logs opcua-operation-service
+docker logs operation-delegation-service
 ```
 
 ## Next Steps

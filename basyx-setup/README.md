@@ -50,11 +50,11 @@ docker compose up -d
 Current operation delegation is simulation and MQTT based:
 
 1. AAS operation invoke in UI/API.
-2. BaSyx forwards to invocationDelegation URL at opcua-operation-service.
-3. opcua-operation-service publishes command to MQTT topic simulation/{stationId}/operations/{operation}.
+2. BaSyx forwards to the invocationDelegation URL at operation-delegation-service.
+3. operation-delegation-service publishes the command to MQTT topic simulation/{stationId}/operations/{operation}.
 4. Simulation listener consumes MQTT command and updates simulated state.
 
-BaSyx delegation allowlist is configured in [basyx/aas-env.properties](basyx/aas-env.properties) for host opcua-operation-service and port 8087.
+BaSyx delegation allowlist is configured in [basyx/aas-env.properties](basyx/aas-env.properties) for host operation-delegation-service and port 8087.
 
 ## MQTT Command Bridge
 
