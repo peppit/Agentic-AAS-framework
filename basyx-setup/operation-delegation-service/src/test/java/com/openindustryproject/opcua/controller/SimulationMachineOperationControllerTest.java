@@ -26,7 +26,8 @@ class SimulationMachineOperationControllerTest {
                     {"value":{"idShort":"StationId","value":"Station_01"}},
                     {"value":{"idShort":"SourcePosition","value":"Conveyor_A"}},
                     {"value":{"idShort":"TargetPosition","value":"Pallet_B"}},
-                    {"value":{"idShort":"requestId","value":"request-1"}}
+                    {"value":{"idShort":"requestId","value":"request-1"}},
+                    {"value":{"idShort":"runId","value":"run-1"}}
                   ]
                 }
                 """;
@@ -46,6 +47,8 @@ class SimulationMachineOperationControllerTest {
 
         JsonObject payload = JsonParser.parseString(payloadCaptor.getValue()).getAsJsonObject();
         assertEquals("Station_01", payload.get("stationId").getAsString());
+        assertEquals("request-1", payload.get("requestId").getAsString());
+        assertEquals("run-1", payload.get("runId").getAsString());
         assertEquals(
                 "Conveyor_A",
                 payload.getAsJsonObject("params").get("SourcePosition").getAsString());

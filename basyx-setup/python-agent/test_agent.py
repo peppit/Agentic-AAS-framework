@@ -1,4 +1,5 @@
 import asyncio
+import csv
 import importlib.util
 import json
 import tempfile
@@ -83,12 +84,14 @@ class FactoryOrchestratorTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
         temp_path = Path(self.tempdir.name)
+        self.log_path = temp_path / "runs.csv"
         config = agent.AgentConfig(
             station_registry_file="",
             job_timeout_seconds=30,
             invoke_retry_count=1,
-            orchestrator_log_csv_path=str(temp_path / "runs.csv"),
+            orchestrator_log_csv_path=str(self.log_path),
             orchestrator_summary_csv_path=str(temp_path / "summary.csv"),
+            measurement_run_id="run-test",
         )
         self.orchestrator = agent.FactoryOrchestrator(config)
         await self.orchestrator.http_client.aclose()
@@ -141,6 +144,9 @@ class FactoryOrchestratorTests(unittest.IsolatedAsyncioTestCase):
             ["StationId", "SourcePosition", "TargetPosition"],
         )
         self.assertNotIn("TargetPosition.", id_shorts)
+        self.assertIn("requestId", id_shorts)
+        self.assertIn("runId", id_shorts)
+        self.assertEqual(dispatch["run_id"], "run-test")
 
     async def test_robot_without_requested_station_route_is_rejected(self):
         robot = agent.RobotEndpoints("state-r2", "skills-r2", "Station_02")
@@ -225,6 +231,30 @@ class FactoryOrchestratorTests(unittest.IsolatedAsyncioTestCase):
                 await self.orchestrator.dispatch_factory_job(dispatch)
 
                 self.assertEqual(len(fake.posts), 1)
+                with self.log_path.open(
+                    "r",
+                    newline="",
+                    encoding="utf-8",
+                ) as log_file:
+                    matching_rows = [
+                        row
+                        for row in csv.DictReader(log_file)
+                        if row["request_id"] == dispatch["request_id"]
+                    ]
+                self.assertEqual(len(matching_rows), 1)
+                self.assertEqual(matching_rows[0]["run_id"], "run-test")
+                self.assertEqual(
+                    matching_rows[0]["status"],
+                    "ok" if status_code == 200 else "failed",
+                )
+                self.assertLessEqual(
+                    int(matching_rows[0]["t1_ms"]),
+                    int(matching_rows[0]["t2_ms"]),
+                )
+                self.assertLessEqual(
+                    int(matching_rows[0]["t2_ms"]),
+                    int(matching_rows[0]["t3_ms"]),
+                )
                 if status_code == 200:
                     await self.orchestrator.handle_operation_ack(
                         json.dumps(

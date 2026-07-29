@@ -38,6 +38,7 @@ class FactoryOrchestrator:
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(self.config.http_timeout_seconds))
         self.job_queue = asyncio.Queue()
         self.dispatch_queue = asyncio.Queue()
+        self.run_id = self.config.measurement_run_id.strip() or str(uuid.uuid4())
         self.lifecycle = LifecycleCoordinator(self.config.job_timeout_seconds)
         # Compatibility aliases keep the existing public surface while lifecycle
         # state and transitions are owned by LifecycleCoordinator.
@@ -49,12 +50,16 @@ class FactoryOrchestrator:
         self.reserved_robots = self.lifecycle.reserved_robots
         self.reserved_stations = self.lifecycle.reserved_stations
         self.log_lock = asyncio.Lock()
+        self.logged_samples = 0
         self.log_headers = [
-            "status",
+            "request_id",
+            "run_id",
             "station_id",
+            "sample",
             "t1_ms",
             "t2_ms",
             "t3_ms",
+            "status",
         ]
         self.summary_headers = [
             "batch_id",
@@ -70,12 +75,6 @@ class FactoryOrchestrator:
             "t3_ms_min",
             "t3_ms_max",
             "t3_ms_mean",
-            "t_match_ms_min",
-            "t_match_ms_max",
-            "t_match_ms_mean",
-            "t_queue_ms_min",
-            "t_queue_ms_max",
-            "t_queue_ms_mean",
         ]
         self.summary_batch_id = 0
         self.summary_buffer: list[dict] = []
@@ -88,6 +87,7 @@ class FactoryOrchestrator:
         self.robots = build_robot_endpoints(station_registry)
         if not self.robots:
             print("[ORCHESTRATOR] Warning: no robot bindings configured; dispatch cannot start")
+        print(f"[ORCHESTRATOR] Measurement run_id={self.run_id}")
 
 
     async def _retry_job_later(self, job: dict) -> None:
@@ -101,7 +101,10 @@ class FactoryOrchestrator:
             try:
                 with path.open("r", encoding="utf-8") as f:
                     if f.readline().strip() == ",".join(headers): return
-                print(f"[ORCHESTRATOR] Resetting outdated header in {path.name}")
+                raise RuntimeError(
+                    f"Unexpected CSV header in {path}. Move or rename the "
+                    "previous log before starting a new run."
+                )
             except OSError:
                 pass
         with path.open("w", newline="", encoding="utf-8") as f:
@@ -140,8 +143,6 @@ class FactoryOrchestrator:
                     "t1_ms": t1,
                     "t2_ms": t2,
                     "t3_ms": t3,
-                    "t_match_ms": t2 - t1,
-                    "t_queue_ms": t3 - t2,
                 }
             )
 
@@ -161,8 +162,6 @@ class FactoryOrchestrator:
             t1_min, t1_max, t1_mean = stats([item["t1_ms"] for item in batch])
             t2_min, t2_max, t2_mean = stats([item["t2_ms"] for item in batch])
             t3_min, t3_max, t3_mean = stats([item["t3_ms"] for item in batch])
-            tm_min, tm_max, tm_mean = stats([item["t_match_ms"] for item in batch])
-            tq_min, tq_max, tq_mean = stats([item["t_queue_ms"] for item in batch])
 
             summary_row = {
                 "batch_id": self.summary_batch_id,
@@ -178,12 +177,6 @@ class FactoryOrchestrator:
                 "t3_ms_min": t3_min,
                 "t3_ms_max": t3_max,
                 "t3_ms_mean": f"{t3_mean:.3f}",
-                "t_match_ms_min": tm_min,
-                "t_match_ms_max": tm_max,
-                "t_match_ms_mean": f"{tm_mean:.3f}",
-                "t_queue_ms_min": tq_min,
-                "t_queue_ms_max": tq_max,
-                "t_queue_ms_mean": f"{tq_mean:.3f}",
             }
 
             with self.summary_path.open("a", newline="", encoding="utf-8") as file:
@@ -196,6 +189,37 @@ class FactoryOrchestrator:
         await self._append_log_row(row)
         await self._append_summary_row_if_ready(row)
         print(f"[ORCHESTRATOR] Logged run # status={row.get('status')} sensor={row.get('sensor')}")
+
+    async def _log_request_status(self, request: dict, status: str) -> None:
+        if request.get("latency_logged"):
+            return
+        self.logged_samples += 1
+        row = {
+            "request_id": request.get("request_id"),
+            "run_id": request.get("run_id") or self.run_id,
+            "station_id": request.get("station_id") or "",
+            "sample": self.logged_samples,
+            "t1_ms": request.get("t1_ms"),
+            "t2_ms": request.get("t2_ms"),
+            "t3_ms": request.get("t3_ms"),
+            "status": status,
+        }
+        if status == "ok":
+            timestamps = [
+                self._safe_float(row[key])
+                for key in ("t1_ms", "t2_ms", "t3_ms")
+            ]
+            if (
+                not all(
+                    row.get(key) not in (None, "")
+                    for key in self.log_headers
+                )
+                or any(value is None for value in timestamps)
+                or not timestamps[0] <= timestamps[1] <= timestamps[2]
+            ):
+                row["status"] = "failed"
+        await self._log_and_print(row)
+        request["latency_logged"] = True
 
     def _load_station_registry(self, file_path: str) -> dict[str, dict]:
         return load_station_registry(file_path)
@@ -259,6 +283,7 @@ class FactoryOrchestrator:
 
         if job_token not in self.active_jobs:
             self.active_jobs.add(job_token)
+            request_id = str(uuid.uuid4())
             await self.job_queue.put({
                 "conveyor_b64": submodel_b64,
                 "station_id": station_id,
@@ -266,10 +291,15 @@ class FactoryOrchestrator:
                 "sensor_key": sensor_key,
                 "token": job_token,
                 "mqtt_topic": mqtt_topic,
+                "request_id": request_id,
+                "run_id": self.run_id,
                 "t1_ms": received_at_ms,
                 "deadline": time.monotonic() + self.config.job_timeout_seconds,
             })
-            print(f"[ORCHESTRATOR] Enqueued event: Sensor '{property_id}' triggered on Conveyor '{submodel_b64}'")
+            print(
+                f"[ORCHESTRATOR] Enqueued event request_id={request_id}: "
+                f"Sensor '{property_id}' triggered on Conveyor '{submodel_b64}'"
+            )
 
     async def start_worker(self) -> None:
         while True:
@@ -278,16 +308,7 @@ class FactoryOrchestrator:
                 await self.process_factory_job(job)
             except Exception as e:
                 traceback.print_exc()
-                await self._log_and_print(
-                    {
-                        "status": "error_match", 
-                        "conveyor_submodel_b64": job.get("conveyor_b64"), 
-                        "sensor": job.get("sensor"), 
-                        "mqtt_topic": job.get("mqtt_topic"), 
-                        "t1_ms": job.get("t1_ms"), 
-                        "notes": str(e)
-                    }
-                )
+                await self._log_request_status(job, "failed")
                 if token := job.get("token"): self.active_jobs.discard(token)
             self.job_queue.task_done()
 
@@ -329,6 +350,8 @@ class FactoryOrchestrator:
 
 
     async def process_factory_job(self, job: dict) -> None:
+        job.setdefault("request_id", str(uuid.uuid4()))
+        job.setdefault("run_id", self.run_id)
         triggering_sensor = job["sensor"]
         triggering_sensor_key = job.get("sensor_key")
         job_station_id = job.get("station_id") or ""
@@ -424,13 +447,21 @@ class FactoryOrchestrator:
                 for id_short, details in operation_inputs.items()
             ]
 
-            request_id = str(uuid.uuid4())
+            request_id = str(job["request_id"])
             input_arguments.append({
                 "value": {
                     "modelType": "Property",
                     "idShort": "requestId",
                     "valueType": "xs:string",
                     "value": request_id,
+                }
+            })
+            input_arguments.append({
+                "value": {
+                    "modelType": "Property",
+                    "idShort": "runId",
+                    "valueType": "xs:string",
+                    "value": job["run_id"],
                 }
             })
             body = {
@@ -469,6 +500,7 @@ class FactoryOrchestrator:
                 "sensor_key": triggering_sensor_key,
                 "t1_ms": job.get("t1_ms"),
                 "t2_ms": t2_ms,
+                "run_id": job.get("run_id"),
                 "robot_skills_submodel_b64": robot.skills_submodel_b64,
                 "robot_key": robot_key,
                 "target_operation": target_op,
@@ -506,15 +538,18 @@ class FactoryOrchestrator:
             f"[ORCHESTRATOR] Job for {triggering_sensor} timed out after "
             f"{self.config.job_timeout_seconds:.1f}s"
         )
+        await self._log_request_status(job, "timeout")
         self.active_jobs.discard(job["token"])
 
     async def dispatch_factory_job(self, dispatch_job: dict) -> None:
         try:
             await self._dispatch_factory_job(dispatch_job)
         except asyncio.CancelledError:
+            await self._log_request_status(dispatch_job, "failed")
             await self._release_dispatch_job(dispatch_job, "dispatch cancelled")
             raise
         except Exception as exc:
+            await self._log_request_status(dispatch_job, "failed")
             await self._release_dispatch_job(
                 dispatch_job,
                 f"dispatch exception: {exc}",
@@ -522,8 +557,6 @@ class FactoryOrchestrator:
             raise
 
     async def _dispatch_factory_job(self, dispatch_job: dict) -> None:
-        t3_ms = int(time.time() * 1000)
-
         print(
             "[ORCHESTRATOR] Dispatching "
             f"operation={dispatch_job.get('target_operation')} "
@@ -534,8 +567,11 @@ class FactoryOrchestrator:
 
         lifecycle = await self.lifecycle.begin_dispatch(dispatch_job)
         if lifecycle is None:
+            await self._log_request_status(dispatch_job, "failed")
             return
 
+        t3_ms = int(time.time() * 1000)
+        dispatch_job["t3_ms"] = t3_ms
         response = await invoke_operation(
             self.http_client,
             dispatch_job["invoke_url"],
@@ -544,27 +580,15 @@ class FactoryOrchestrator:
         )
 
         if response is None:
+            await self._log_request_status(dispatch_job, "failed")
             await self._release_dispatch_job(dispatch_job, "operation invocation produced no response")
             return
 
         print(f"[ORCHESTRATOR] Response status from robot: {response.status_code}")
 
-        t1_ms = dispatch_job.get("t1_ms")
-        t2_ms = dispatch_job.get("t2_ms")
-
-        await self._log_and_print(
-            {
-                "status": (
-                    "ok"
-                    if response.status_code < 400
-                    else "error_invoke"
-                ),
-                "station_id": dispatch_job.get("station_id") or "",
-                "sensor": dispatch_job.get("sensor"),
-                "t1_ms": t1_ms,
-                "t2_ms": t2_ms,
-                "t3_ms": t3_ms,
-            }
+        await self._log_request_status(
+            dispatch_job,
+            "ok" if response.status_code < 400 else "failed",
         )
 
         if response.status_code < 400:

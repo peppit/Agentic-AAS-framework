@@ -32,6 +32,7 @@ class AgentConfig:
         str(Path(__file__).resolve().parent / "orchestrator_summary.csv"),
     )
     summary_batch_size: int = int(os.getenv("SUMMARY_BATCH_SIZE", "5"))
+    measurement_run_id: str = os.getenv("MEASUREMENT_RUN_ID", "1")
 
 
 @dataclass(frozen=True)

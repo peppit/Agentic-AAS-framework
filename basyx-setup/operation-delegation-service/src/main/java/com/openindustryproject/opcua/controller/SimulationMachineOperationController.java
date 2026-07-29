@@ -141,6 +141,7 @@ public class SimulationMachineOperationController {
         try {
             JsonObject root = parseInputRoot(input);
             String requestId = extractRequestId(root, input);
+            String runId = extractStringParameter(root, "runId", "");
             String stationId = extractMoveBoxStationId(root);
             JsonObject extractedParams = extractParams(root);
             String sourcePosition = extractStringParameterAny(root, null, "SourcePosition");
@@ -171,13 +172,15 @@ public class SimulationMachineOperationController {
                 stationId,
                 sourcePosition,
                 targetPosition);
-            String payload = buildGenericCommandPayload(requestId, stationId, operation, params);
+            String payload = buildGenericCommandPayload(
+                requestId, runId, stationId, operation, params);
             mqttPublisher.publishStationOperation(stationId, operation, payload);
 
             Map<String, Object> response = new HashMap<>();
             response.put("status", "SUCCESS");
             response.put("message", "Robot MoveBox command published");
             response.put("requestId", requestId);
+            response.put("runId", runId);
             response.put("stationId", stationId);
             response.put("operation", operation);
             response.put("SourcePosition", sourcePosition);
@@ -449,8 +452,19 @@ public class SimulationMachineOperationController {
     }
 
     private String buildGenericCommandPayload(String requestId, String stationId, String operation, JsonObject params) {
+        return buildGenericCommandPayload(
+            requestId, "", stationId, operation, params);
+    }
+
+    private String buildGenericCommandPayload(
+            String requestId,
+            String runId,
+            String stationId,
+            String operation,
+            JsonObject params) {
         JsonObject payload = new JsonObject();
         payload.addProperty("requestId", requestId);
+        payload.addProperty("runId", runId);
         payload.addProperty("stationId", stationId);
         payload.addProperty("operation", operation);
         payload.add("params", params == null ? new JsonObject() : params);

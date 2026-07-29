@@ -49,7 +49,6 @@ services:
       mongo:
         condition: service_healthy
   aas-web-ui:
-    profiles: ["demo"]
     image: eclipsebasyx/aas-gui:SNAPSHOT
     container_name: aas-ui
     ports:
@@ -109,7 +108,6 @@ services:
         condition: service_healthy
 
   aas-discovery:
-    profiles: ["demo"]
     image: eclipsebasyx/aas-discovery:2.0.0-SNAPSHOT
     container_name: aas-discovery
     environment:
@@ -151,7 +149,6 @@ services:
       start_period: 1s
       retries: 3
   dashboard-api:
-    profiles: ["demo"]
     image: aaronzi/basyx-dashboard-api:SNAPSHOT_02
     container_name: dashboard-api
     ports:
@@ -216,6 +213,7 @@ services:
       - ORCHESTRATOR_LOG_CSV_PATH=/app/orchestrator_logs.csv
       - ORCHESTRATOR_SUMMARY_CSV_PATH=/app/orchestrator_summary.csv
       - SUMMARY_BATCH_SIZE=5
+      - MEASUREMENT_RUN_ID=${MEASUREMENT_RUN_ID:-}
     volumes:
       - ../orchestrator_logs.csv:/app/orchestrator_logs.csv
       - ../orchestrator_summary.csv:/app/orchestrator_summary.csv
