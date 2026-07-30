@@ -55,42 +55,46 @@ if __name__ == "__main__":
     base_dir = Path(__file__).resolve().parent
     aas_dir = base_dir / "aas"
 
-    source_conveyor = aas_dir / "conveyorbelt01.aasx"
-    source_robot = aas_dir / "robot01.aasx"
+    source_station_number = 1
+    # Change only this value when creating the next station.
+    target_station_number = 5
 
-    target_conveyor = aas_dir / "conveyorbelt02.aasx"
-    target_robot = aas_dir / "robot02.aasx"
+    source_number = f"{source_station_number:02d}"
+    target_number = f"{target_station_number:02d}"
+    source_sequence = f"{source_station_number:03d}"
+    target_sequence = f"{target_station_number:03d}"
+
+    source_conveyor = aas_dir / f"conveyorbelt{source_number}.aasx"
+    source_robot = aas_dir / f"robot{source_number}.aasx"
+
+    target_conveyor = aas_dir / f"conveyorbelt{target_number}.aasx"
+    target_robot = aas_dir / f"robot{target_number}.aasx"
 
     common_station_replacements = {
-        "Station_01": "Station_02",
-        "station_01": "station_02",
+        f"Station_{source_number}": f"Station_{target_number}",
+        f"station_{source_number}": f"station_{target_number}",
     }
 
     conveyor_replacements = {
         **common_station_replacements,
-        "CoveyorBelt01": "CoveyorBelt02",
-        "ConveyorBelt01": "ConveyorBelt02",
-        "conveyorbelt01": "conveyorbelt02",
-        "conveyorbelt-01": "conveyorbelt-02",
-        "SIM-CONV-001": "SIM-CONV-002",
-        "Station_01": "Station_02",
-
-
-        "https://admin-shell.io/idta/SubmodelTemplate/DigitalNameplate/3/0": "https://admin-shell.io/idta/SubmodelTemplate/DigitalNameplate/3/0/station02",
-        "https://admin-shell.io/aas/conveyorbelt01": "https://admin-shell.io/aas/conveyorbelt02",
-        "https://example.com/ids/sm/3121_1142_6062_3675": "https://example.com/ids/sm/3121_1142_6062_3675/station02",
-        "https://example.com/ids/sm/5293_2142_6062_9148": "https://example.com/ids/sm/5293_2142_6062_9148/station02"
+        "https://admin-shell.io/idta/SubmodelTemplate/DigitalNameplate/3/0": f"https://admin-shell.io/idta/SubmodelTemplate/DigitalNameplate/3/0/station{target_number}",
+        "https://example.com/ids/sm/3121_1142_6062_3675": f"https://example.com/ids/sm/3121_1142_6062_3675/station{target_number}",
+        "https://example.com/ids/sm/5293_2142_6062_9148": f"https://example.com/ids/sm/5293_2142_6062_9148/station{target_number}",
+        f"CoveyorBelt{source_number}": f"CoveyorBelt{target_number}",
+        f"ConveyorBelt{source_number}": f"ConveyorBelt{target_number}",
+        f"conveyorbelt{source_number}": f"conveyorbelt{target_number}",
+        f"conveyorbelt-{source_number}": f"conveyorbelt-{target_number}",
+        f"SIM-CONV-{source_sequence}": f"SIM-CONV-{target_sequence}",
+        f"Station_{source_number}": f"Station_{target_number}",
     }
 
     robot_replacements = {
         **common_station_replacements,
-        "Robot01": "Robot02",
-        "robot01": "robot02",
-        "SixAxisRobot01": "SixAxisRobot02",
-        "robot-01": "robot-02",
-        "Station_01": "Station_02",
-
-        "https://admin-shell.io/idta/aas/robot01/DigitalNameplate/3/0": "https://admin-shell.io/idta/aas/robot02/DigitalNameplate/3/0/station02",
+        f"Robot{source_number}": f"Robot{target_number}",
+        f"robot{source_number}": f"robot{target_number}",
+        f"SixAxisRobot{source_number}": f"SixAxisRobot{target_number}",
+        f"robot-{source_number}": f"robot-{target_number}",
+        f"Station_{source_number}": f"Station_{target_number}",
     }
 
     clone_aasx_with_replacements(source_conveyor, target_conveyor, conveyor_replacements)
