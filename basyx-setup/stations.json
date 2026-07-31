@@ -135,6 +135,87 @@
           "type": "boolean"
         }
       }
+    },
+    "station_06": {
+      "stationId": "Station_06",
+      "conveyorSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTI5M18yMTQyXzYwNjJfOTE0OC9zdGF0aW9uMDYvY29udmV5b3IwMQ",
+      "conveyorOperationsSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vMzEyMV8xMTQyXzYwNjJfMzY3NS9zdGF0aW9uMDYvY29udmV5b3IwMQ",
+      "robotStateSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTExNV85MDgxXzYwNjJfMTg2NS9yb2JvdDA2",
+      "robotSkillsSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Ny9yb2JvdDA2",
+      "conveyorProperties": {
+        "isRunning": {
+          "idShort": "IsRunning",
+          "type": "boolean"
+        },
+        "currentSpeed": {
+          "idShort": "CurrentSpeed",
+          "type": "double"
+        },
+        "boxDetected": {
+          "idShort": "Sensor_BoxPresent",
+          "type": "boolean"
+        }
+      },
+      "robotProperties": {
+        "isMoving": {
+          "idShort": "IsMoving",
+          "type": "boolean"
+        }
+      }
+    },
+    "station_07": {
+      "stationId": "Station_07",
+      "conveyorSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTI5M18yMTQyXzYwNjJfOTE0OC9zdGF0aW9uMDcvY29udmV5b3IwMQ",
+      "conveyorOperationsSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vMzEyMV8xMTQyXzYwNjJfMzY3NS9zdGF0aW9uMDcvY29udmV5b3IwMQ",
+      "robotStateSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTExNV85MDgxXzYwNjJfMTg2NS9yb2JvdDA3",
+      "robotSkillsSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Ny9yb2JvdDA3",
+      "conveyorProperties": {
+        "isRunning": {
+          "idShort": "IsRunning",
+          "type": "boolean"
+        },
+        "currentSpeed": {
+          "idShort": "CurrentSpeed",
+          "type": "double"
+        },
+        "boxDetected": {
+          "idShort": "Sensor_BoxPresent",
+          "type": "boolean"
+        }
+      },
+      "robotProperties": {
+        "isMoving": {
+          "idShort": "IsMoving",
+          "type": "boolean"
+        }
+      }
+    },
+    "station_08": {
+      "stationId": "Station_08",
+      "conveyorSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTI5M18yMTQyXzYwNjJfOTE0OC9zdGF0aW9uMDgvY29udmV5b3IwMQ",
+      "conveyorOperationsSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vMzEyMV8xMTQyXzYwNjJfMzY3NS9zdGF0aW9uMDgvY29udmV5b3IwMQ",
+      "robotStateSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vNTExNV85MDgxXzYwNjJfMTg2NS9yb2JvdDA4",
+      "robotSkillsSubmodelB64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9pZHMvc20vODE4MF8wMTgxXzYwNjJfODI0Ny9yb2JvdDA4",
+      "conveyorProperties": {
+        "isRunning": {
+          "idShort": "IsRunning",
+          "type": "boolean"
+        },
+        "currentSpeed": {
+          "idShort": "CurrentSpeed",
+          "type": "double"
+        },
+        "boxDetected": {
+          "idShort": "Sensor_BoxPresent",
+          "type": "boolean"
+        }
+      },
+      "robotProperties": {
+        "isMoving": {
+          "idShort": "IsMoving",
+          "type": "boolean"
+        }
+      }
     }
   }
 }
