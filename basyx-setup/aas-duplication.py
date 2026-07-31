@@ -57,7 +57,7 @@ if __name__ == "__main__":
 
     source_station_number = 1
     # Change only this value when creating the next station.
-    target_station_number = 8
+    target_station_number = 16
 
     source_number = f"{source_station_number:02d}"
     target_number = f"{target_station_number:02d}"
