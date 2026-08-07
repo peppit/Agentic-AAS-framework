@@ -1,7 +1,9 @@
 import asyncio
 import csv
+import json
 import time
 import uuid
+from collections import defaultdict, deque
 from pathlib import Path
 from statistics import mean
 from typing import Optional
@@ -39,7 +41,8 @@ class FactoryOrchestrator:
         self.job_queue = asyncio.Queue()
         self.dispatch_queue = asyncio.Queue()
         self.run_id = self.config.measurement_run_id.strip() or str(uuid.uuid4())
-        self.lifecycle = LifecycleCoordinator(self.config.job_timeout_seconds)
+        self.lifecycle = LifecycleCoordinator(self.config.operation_timeout_seconds)
+        self.lifecycle.on_robot_available = self._schedule_next_for_robot
         # Compatibility aliases keep the existing public surface while lifecycle
         # state and transitions are owned by LifecycleCoordinator.
         self.active_jobs = self.lifecycle.active_jobs
@@ -48,7 +51,15 @@ class FactoryOrchestrator:
         self.station_lifecycles = self.lifecycle.station_lifecycles
         self.lifecycle_by_request_id = self.lifecycle.lifecycle_by_request_id
         self.reserved_robots = self.lifecycle.reserved_robots
-        self.reserved_stations = self.lifecycle.reserved_stations
+        self.box_queues_by_station: dict[str, deque[dict]] = defaultdict(deque)
+        self.pending_by_robot: dict[str, deque[dict]] = defaultdict(deque)
+        self.pending_unassigned: deque[dict] = deque()
+        self.pending_by_station: dict[str, deque[dict]] = defaultdict(deque)
+        self.pending_request_ids: set[str] = set()
+        self.pending_timeout_tasks: dict[str, asyncio.Task] = {}
+        self.server_online = False
+        self.server_instance_id = ""
+        self.station_statuses: dict[str, dict] = {}
         self.log_lock = asyncio.Lock()
         self.logged_samples = 0
         self.log_headers = [
@@ -89,11 +100,6 @@ class FactoryOrchestrator:
             print("[ORCHESTRATOR] Warning: no robot bindings configured; dispatch cannot start")
         print(f"[ORCHESTRATOR] Measurement run_id={self.run_id}")
 
-
-    async def _retry_job_later(self, job: dict) -> None:
-        await asyncio.sleep(self.config.job_retry_seconds)
-        await self.job_queue.put(job)
-
     def _ensure_csv_file(self, path: Path, headers: list[str], check_headers: bool = False) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists() and path.stat().st_size > 0:
@@ -111,6 +117,14 @@ class FactoryOrchestrator:
             csv.DictWriter(f, fieldnames=headers).writeheader()
     
     async def close(self):
+        for task in self.pending_timeout_tasks.values():
+            task.cancel()
+        await asyncio.gather(
+            *self.pending_timeout_tasks.values(),
+            return_exceptions=True,
+        )
+        self.pending_timeout_tasks.clear()
+        self.pending_request_ids.clear()
         await self.lifecycle.close()
         await self.http_client.aclose()
 
@@ -260,46 +274,60 @@ class FactoryOrchestrator:
             return
 
         if bool_value is False:
-            lifecycle = self.station_lifecycles.get(normalize_station_id(station_id)) if station_id else None
-            if lifecycle and lifecycle.get("sensor_key") == sensor_key:
-                lifecycle["sensor_clear"] = True
-                await self._try_finalize_lifecycle(lifecycle)
-            elif self.sensor_waiting_for_clear.get(sensor_key):
-                self.sensor_waiting_for_clear[sensor_key] = False
-                print(f"[ORCHESTRATOR] Sensor '{property_id}' on Conveyor '{submodel_b64}' cleared; ready for next box detection")
+            self.sensor_waiting_for_clear[sensor_key] = False
+            station_key = normalize_station_id(station_id)
+            box_queue = self.box_queues_by_station.get(station_key)
+            cleared_job = None
+            if box_queue:
+                for queued_job in box_queue:
+                    if (
+                        queued_job.get("sensor_key") == sensor_key
+                        and not queued_job.get("sensor_clear")
+                    ):
+                        cleared_job = queued_job
+                        break
+            if cleared_job is not None:
+                cleared_job["sensor_clear"] = True
+                box_queue.remove(cleared_job)
+                lifecycle = self.lifecycle_by_request_id.get(
+                    cleared_job["request_id"]
+                )
+                if lifecycle is not None:
+                    lifecycle["sensor_clear"] = True
+                    await self._try_finalize_lifecycle(lifecycle)
+            if box_queue is not None and not box_queue:
+                self.box_queues_by_station.pop(station_key, None)
+            print(
+                f"[ORCHESTRATOR] Sensor '{property_id}' on Conveyor "
+                f"'{submodel_b64}' cleared; ready for next box detection"
+            )
             return
-
-        lifecycle = self.station_lifecycles.get(normalize_station_id(station_id))
-
-        if lifecycle and lifecycle.get("sensor_key") == sensor_key:
-            lifecycle["sensor_clear"] = False
-
 
         if self.sensor_waiting_for_clear.get(sensor_key):
             return
 
-        #Create am unique job identifier to prevent duplicate ingestion
-        job_token = f"{submodel_b64}_{property_id}"
-
-        if job_token not in self.active_jobs:
-            self.active_jobs.add(job_token)
-            request_id = str(uuid.uuid4())
-            await self.job_queue.put({
-                "conveyor_b64": submodel_b64,
-                "station_id": station_id,
-                "sensor": property_id,
-                "sensor_key": sensor_key,
-                "token": job_token,
-                "mqtt_topic": mqtt_topic,
-                "request_id": request_id,
-                "run_id": self.run_id,
-                "t1_ms": received_at_ms,
-                "deadline": time.monotonic() + self.config.job_timeout_seconds,
-            })
-            print(
-                f"[ORCHESTRATOR] Enqueued event request_id={request_id}: "
-                f"Sensor '{property_id}' triggered on Conveyor '{submodel_b64}'"
-            )
+        request_id = str(uuid.uuid4())
+        job = {
+            "conveyor_b64": submodel_b64,
+            "station_id": station_id,
+            "sensor": property_id,
+            "sensor_key": sensor_key,
+            "sensor_clear": False,
+            "token": request_id,
+            "mqtt_topic": mqtt_topic,
+            "request_id": request_id,
+            "run_id": self.run_id,
+            "t1_ms": received_at_ms,
+            "deadline": time.monotonic() + self.config.queue_timeout_seconds,
+        }
+        self.sensor_waiting_for_clear[sensor_key] = True
+        self.active_jobs.add(request_id)
+        self.box_queues_by_station[normalize_station_id(station_id)].append(job)
+        await self.job_queue.put(job)
+        print(
+            f"[ORCHESTRATOR] Enqueued event request_id={request_id}: "
+            f"Sensor '{property_id}' triggered on Conveyor '{submodel_b64}'"
+        )
 
     async def start_worker(self) -> None:
         while True:
@@ -326,13 +354,163 @@ class FactoryOrchestrator:
         await self.lifecycle.expire(request_id)
 
     async def _release_dispatch_job(self, dispatch_job: dict, reason: str) -> None:
-        await self.lifecycle.release(dispatch_job, reason)
+        robot_key = await self.lifecycle.release(dispatch_job, reason)
+        if robot_key:
+            await self._schedule_next_for_robot(robot_key)
 
     async def _try_finalize_lifecycle(self, lifecycle: dict) -> None:
         await self.lifecycle.try_finalize(lifecycle)
 
     async def handle_operation_ack(self, payload: str) -> None:
-        await self.lifecycle.handle_ack(payload)
+        robot_key = await self.lifecycle.handle_ack(payload)
+        if robot_key:
+            await self._schedule_next_for_robot(robot_key)
+
+    def _station_is_ready(self, station_id: str) -> bool:
+        station_key = normalize_station_id(station_id)
+        status = self.station_statuses.get(station_key, {})
+        return (
+            self.server_online
+            and bool(self.server_instance_id)
+            and status.get("serverInstanceId") == self.server_instance_id
+            and status.get("online") is True
+            and status.get("robotReady") is True
+        )
+
+    async def _queue_station_pending_job(self, job: dict) -> None:
+        request_id = str(job["request_id"])
+        if time.monotonic() >= float(job["deadline"]):
+            await self._log_request_status(job, "timeout")
+            self.active_jobs.discard(job["token"])
+            return
+        if request_id in self.pending_request_ids:
+            return
+
+        station_key = normalize_station_id(job.get("station_id") or "")
+        job["pending_station_key"] = station_key
+        self.pending_request_ids.add(request_id)
+        self.active_jobs.add(job["token"])
+        self.pending_by_station[station_key].append(job)
+        self.pending_timeout_tasks[request_id] = asyncio.create_task(
+            self._expire_pending_job(job)
+        )
+        print(
+            f"[ORCHESTRATOR] Queued request {request_id} for station "
+            f"{station_key}; waiting for server and robot readiness"
+        )
+
+    async def _drain_station_pending(self, station_id: str) -> None:
+        station_key = normalize_station_id(station_id)
+        if not self._station_is_ready(station_key):
+            return
+        queue = self.pending_by_station.get(station_key)
+        while queue:
+            job = queue[0]
+            self._remove_pending_job(job)
+            self._cancel_pending_timeout(str(job["request_id"]))
+            await self.job_queue.put(job)
+
+    async def _handle_station_unavailable(self, station_id: str) -> None:
+        station_key = normalize_station_id(station_id)
+
+        queued_jobs = []
+        for queue in self.pending_by_robot.values():
+            queued_jobs.extend(
+                job
+                for job in list(queue)
+                if normalize_station_id(job.get("station_id") or "") == station_key
+            )
+        queued_jobs.extend(
+            job
+            for job in list(self.pending_unassigned)
+            if normalize_station_id(job.get("station_id") or "") == station_key
+        )
+        for job in queued_jobs:
+            self._remove_pending_job(job)
+            self._cancel_pending_timeout(str(job["request_id"]))
+            await self._queue_station_pending_job(job)
+
+        for lifecycle in list(self.station_lifecycles.get(station_key, [])):
+            operation_started = bool(lifecycle.get("operation_started"))
+            request_id = lifecycle.get("request_id")
+            robot_key = await self.lifecycle.release(
+                lifecycle,
+                "station became unavailable",
+            )
+            if operation_started:
+                print(
+                    f"[ORCHESTRATOR] Request {request_id} was interrupted after "
+                    "operation start; state is unknown and it will not be retried"
+                )
+            else:
+                lifecycle["deadline"] = (
+                    time.monotonic() + self.config.queue_timeout_seconds
+                )
+                await self._queue_station_pending_job(lifecycle)
+            if robot_key:
+                await self._schedule_next_for_robot(robot_key)
+
+    async def handle_server_status(self, payload: str) -> None:
+        try:
+            status = json.loads(payload)
+        except json.JSONDecodeError:
+            print(f"[ORCHESTRATOR] Ignored malformed server status: {payload!r}")
+            return
+        if not isinstance(status, dict) or not isinstance(status.get("online"), bool):
+            return
+
+        instance_id = str(status.get("serverInstanceId") or "").strip()
+        if not instance_id:
+            return
+        if (
+            status["online"] is False
+            and self.server_instance_id
+            and instance_id != self.server_instance_id
+        ):
+            return
+
+        known_stations = set(self.station_statuses)
+        previously_ready = {
+            station_id: self._station_is_ready(station_id)
+            for station_id in known_stations
+        }
+        self.server_online = status["online"]
+        self.server_instance_id = instance_id
+
+        for station_id in known_stations:
+            ready = self._station_is_ready(station_id)
+            if previously_ready[station_id] and not ready:
+                await self._handle_station_unavailable(station_id)
+            elif not previously_ready[station_id] and ready:
+                await self._drain_station_pending(station_id)
+
+    async def handle_station_status(self, topic: str, payload: str) -> None:
+        try:
+            status = json.loads(payload)
+        except json.JSONDecodeError:
+            print(f"[ORCHESTRATOR] Ignored malformed station status: {payload!r}")
+            return
+        if not isinstance(status, dict):
+            return
+
+        topic_parts = topic.split("/")
+        station_id = str(status.get("stationId") or topic_parts[1]).strip()
+        station_key = normalize_station_id(station_id)
+        if (
+            not station_key
+            or not isinstance(status.get("online"), bool)
+            or not isinstance(status.get("robotReady"), bool)
+            or not str(status.get("serverInstanceId") or "").strip()
+        ):
+            return
+
+        previously_ready = self._station_is_ready(station_key)
+        self.station_statuses[station_key] = status
+        ready = self._station_is_ready(station_key)
+        if previously_ready and not ready:
+            await self._handle_station_unavailable(station_key)
+        elif not previously_ready and ready:
+            await self._drain_station_pending(station_key)
 
     async def _read_robot_bool_state(
         self,
@@ -348,37 +526,231 @@ class FactoryOrchestrator:
     def _build_operation_inputs(self, selected_route: dict) -> dict[str, dict]:
         return build_operation_inputs(selected_route)
 
+    def _cancel_pending_timeout(self, request_id: str) -> None:
+        timeout_task = self.pending_timeout_tasks.pop(request_id, None)
+        if timeout_task and timeout_task is not asyncio.current_task():
+            timeout_task.cancel()
+
+    def _remove_pending_job(self, job: dict) -> None:
+        request_id = str(job.get("request_id") or "")
+        station_key = job.get("pending_station_key")
+        robot_key = job.get("pending_robot_key")
+        if station_key:
+            queue = self.pending_by_station.get(station_key)
+            if queue and job in queue:
+                queue.remove(job)
+            if queue is not None and not queue:
+                self.pending_by_station.pop(station_key, None)
+        elif robot_key:
+            queue = self.pending_by_robot.get(robot_key)
+            if queue and job in queue:
+                queue.remove(job)
+            if queue is not None and not queue:
+                self.pending_by_robot.pop(robot_key, None)
+        elif job in self.pending_unassigned:
+            self.pending_unassigned.remove(job)
+        self.pending_request_ids.discard(request_id)
+        job.pop("pending_station_key", None)
+        job.pop("pending_robot_key", None)
+
+    async def _expire_pending_job(self, job: dict) -> None:
+        request_id = str(job["request_id"])
+        delay = max(0.0, float(job["deadline"]) - time.monotonic())
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        if request_id not in self.pending_request_ids:
+            return
+        self._remove_pending_job(job)
+        self.pending_timeout_tasks.pop(request_id, None)
+        print(
+            f"[ORCHESTRATOR] Queued job for {job['sensor']} timed out after "
+            f"{self.config.queue_timeout_seconds:.1f}s"
+        )
+        await self._log_request_status(job, "timeout")
+        self.active_jobs.discard(job["token"])
+
+    async def _queue_pending_job(
+        self,
+        job: dict,
+        candidates: list[dict],
+        robot_key: Optional[str] = None,
+    ) -> None:
+        request_id = str(job["request_id"])
+        if time.monotonic() >= float(job["deadline"]):
+            await self._log_request_status(job, "timeout")
+            self.active_jobs.discard(job["token"])
+            return
+        if request_id in self.pending_request_ids:
+            return
+
+        job["candidate_by_robot"] = {
+            candidate["robot"].state_submodel_b64: candidate
+            for candidate in candidates
+        }
+        job["pending_robot_key"] = robot_key
+        self.pending_request_ids.add(request_id)
+        if robot_key:
+            self.pending_by_robot[robot_key].append(job)
+            print(
+                f"[ORCHESTRATOR] Queued request {request_id} for busy "
+                f"robot {robot_key}"
+            )
+        else:
+            self.pending_unassigned.append(job)
+            print(
+                f"[ORCHESTRATOR] Queued request {request_id} without a robot; "
+                "waiting for a capable robot to become available"
+            )
+        self.pending_timeout_tasks[request_id] = asyncio.create_task(
+            self._expire_pending_job(job)
+        )
+
+    async def _schedule_next_for_robot(self, robot_key: str) -> None:
+        assigned_queue = self.pending_by_robot.get(robot_key)
+        if assigned_queue:
+            job = assigned_queue[0]
+            candidate = job.get("candidate_by_robot", {}).get(robot_key)
+            if candidate is not None:
+                self._remove_pending_job(job)
+                self._cancel_pending_timeout(str(job["request_id"]))
+                await self._dispatch_to_robot(job, candidate)
+                return
+
+        for job in list(self.pending_unassigned):
+            candidate = job.get("candidate_by_robot", {}).get(robot_key)
+            if candidate is None:
+                continue
+            self._remove_pending_job(job)
+            self._cancel_pending_timeout(str(job["request_id"]))
+            await self._dispatch_to_robot(job, candidate)
+            return
+
+    async def _dispatch_to_robot(self, job: dict, candidate: dict) -> None:
+        if not self._station_is_ready(job.get("station_id") or ""):
+            await self._queue_station_pending_job(job)
+            return
+
+        robot = candidate["robot"]
+        selected_route = candidate["route"]
+        robot_key = robot.state_submodel_b64
+        robot_id = robot.skills_submodel_b64
+        if robot_key in self.reserved_robots:
+            await self._queue_pending_job(job, [candidate], robot_key)
+            return
+
+        operation_inputs = self._build_operation_inputs(selected_route)
+        input_arguments = [
+            {
+                "value": {
+                    "modelType": "Property",
+                    "idShort": id_short,
+                    "valueType": details["valueType"],
+                    "value": details["value"],
+                }
+            }
+            for id_short, details in operation_inputs.items()
+        ]
+        request_id = str(job["request_id"])
+        input_arguments.append({
+            "value": {
+                "modelType": "Property",
+                "idShort": "requestId",
+                "valueType": "xs:string",
+                "value": request_id,
+            }
+        })
+        input_arguments.append({
+            "value": {
+                "modelType": "Property",
+                "idShort": "runId",
+                "valueType": "xs:string",
+                "value": job["run_id"],
+            }
+        })
+        body = {
+            "inputArguments": input_arguments,
+            "inoutputArguments": [],
+            "requestedTimeout": int(self.config.http_timeout_seconds * 1000),
+        }
+        selected_station_id = selected_route["StationId"]
+        target_op = selected_route["TargetOperation"]
+        skills_url = (
+            f"{self.config.basyx_base_url}/submodels/"
+            f"{robot.skills_submodel_b64}"
+        )
+        dispatch_payload = {
+            "token": job.get("token"),
+            "station_id": selected_station_id,
+            "source_position": selected_route["SourcePosition"],
+            "target_position": selected_route["TargetPosition"],
+            "sensor": job["sensor"],
+            "sensor_key": job.get("sensor_key"),
+            "sensor_clear": bool(job.get("sensor_clear")),
+            "t1_ms": job.get("t1_ms"),
+            "t2_ms": int(time.time() * 1000),
+            "run_id": job.get("run_id"),
+            "robot_skills_submodel_b64": robot.skills_submodel_b64,
+            "robot_key": robot_key,
+            "target_operation": target_op,
+            "selected_route": selected_route["route_id"],
+            "operation_inputs": {
+                id_short: details["value"]
+                for id_short, details in operation_inputs.items()
+            },
+            "invoke_url": f"{skills_url}/submodel-elements/{target_op}/invoke",
+            "body": body,
+            "request_id": request_id,
+            "deadline": job.get("deadline"),
+            "required_operation": job.get("required_operation"),
+        }
+
+        self.reserved_robots.add(robot_key)
+        try:
+            await self.dispatch_queue.put(dispatch_payload)
+        except BaseException:
+            self.reserved_robots.discard(robot_key)
+            raise
+        print(
+            f"[ORCHESTRATOR] Reserved robot {robot_id} as {robot_key}; "
+            f"queued operation={target_op} inputs={dispatch_payload['operation_inputs']}"
+        )
+
 
     async def process_factory_job(self, job: dict) -> None:
         job.setdefault("request_id", str(uuid.uuid4()))
         job.setdefault("run_id", self.run_id)
+        job.setdefault("token", job["request_id"])
+        job.setdefault(
+            "sensor_clear",
+            self.sensor_states.get(job.get("sensor_key")) is False,
+        )
         triggering_sensor = job["sensor"]
-        triggering_sensor_key = job.get("sensor_key")
         job_station_id = job.get("station_id") or ""
         required_operation = str(
             job.get("required_operation") or job.get("target_operation") or ""
         ).strip()
         client = self.http_client
 
-        deadline = job.setdefault(
+        job.setdefault(
             "deadline",
-            time.monotonic() + self.config.job_timeout_seconds,
+            time.monotonic() + self.config.queue_timeout_seconds,
         )
 
+        if not self._station_is_ready(job_station_id):
+            await self._queue_station_pending_job(job)
+            return
+
+        semantic_candidates = []
         for robot in self.robots:
-            robot_key = robot.state_submodel_b64
             robot_id = robot.skills_submodel_b64
             print(
                 "[ORCHESTRATOR] Considering robot "
                 f"{robot_id} home_station={robot.station_id or 'unspecified'} "
                 f"requested_station={job_station_id or 'missing'} sensor={triggering_sensor}"
             )
-            locally_reserved = robot_key in self.reserved_robots
-
-            state_url = f"{self.config.basyx_base_url}/submodels/{robot.state_submodel_b64}"
             skills_url = f"{self.config.basyx_base_url}/submodels/{robot.skills_submodel_b64}"
-            # 1. Semantic discovery: route station is authoritative. The configured
-            # robot station is metadata and never excludes a cross-station route.
             routes = await fetch_supported_capabilities(
                 client,
                 skills_url,
@@ -387,7 +759,6 @@ class FactoryOrchestrator:
             if routes is None:
                 continue
 
-            # 2. Match station, sensor, and (when supplied) required operation.
             selected_route = match_capability_route(
                 routes,
                 robot_id=robot_id,
@@ -400,146 +771,65 @@ class FactoryOrchestrator:
                     f"[ORCHESTRATOR] Rejected robot {robot_id}: no matching station-aware route"
                 )
                 continue
+            semantic_candidates.append({"robot": robot, "route": selected_route})
 
-            if locally_reserved or robot_key in self.reserved_robots:
-                print(
-                    f"[ORCHESTRATOR] Rejected robot {robot_id}: "
-                    f"local reservation already exists for {robot_key}"
-                )
-                continue
-
-            # 3. Robot state and fault checks.
-            moving = await self._read_robot_bool_state(client, state_url, "IsMoving")
-            if moving is not False:
-                print(
-                    f"[ORCHESTRATOR] Rejected robot {robot_id}: "
-                    f"IsMoving is {moving!r}, expected False"
-                )
-                continue
-
-            fault_active = await self._read_robot_bool_state(client, state_url, "FaultActive")
+        capable_candidates = []
+        for candidate in semantic_candidates:
+            robot = candidate["robot"]
+            robot_id = robot.skills_submodel_b64
+            state_url = (
+                f"{self.config.basyx_base_url}/submodels/"
+                f"{robot.state_submodel_b64}"
+            )
+            fault_active = await self._read_robot_bool_state(
+                client, state_url, "FaultActive"
+            )
             if fault_active is not False:
                 print(
                     f"[ORCHESTRATOR] Rejected robot {robot_id}: "
                     f"FaultActive is {fault_active!r}, expected False"
                 )
                 continue
+            moving = await self._read_robot_bool_state(client, state_url, "IsMoving")
+            if moving is None:
+                print(
+                    f"[ORCHESTRATOR] Rejected robot {robot_id}: "
+                    "IsMoving could not be read"
+                )
+                continue
+            candidate["moving"] = moving
+            capable_candidates.append(candidate)
 
-            target_op = selected_route["TargetOperation"]
+        idle_candidates = [
+            candidate
+            for candidate in capable_candidates
+            if candidate["moving"] is False
+            and candidate["robot"].state_submodel_b64 not in self.reserved_robots
+        ]
+        if idle_candidates:
+            selected = idle_candidates[0]
+            selected_route = selected["route"]
+            robot_id = selected["robot"].skills_submodel_b64
             print(
                 f"[ORCHESTRATOR] Selected route {selected_route['route_id'] or '<unnamed>'} "
                 f"on robot {robot_id}: station={selected_route['StationId']} "
                 f"source={selected_route['SourcePosition'] or 'n/a'} "
-                f"target={selected_route['TargetPosition'] or 'n/a'} operation={target_op}"
+                f"target={selected_route['TargetPosition'] or 'n/a'} "
+                f"operation={selected_route['TargetOperation']}"
             )
-
-            # 4. Generate operation arguments from the selected route.
-            operation_inputs = self._build_operation_inputs(selected_route)
-            input_arguments = [
-                {
-                    "value": {
-                        "modelType": "Property",
-                        "idShort": id_short,
-                        "valueType": details["valueType"],
-                        "value": details["value"],
-                    }
-                }
-                for id_short, details in operation_inputs.items()
-            ]
-
-            request_id = str(job["request_id"])
-            input_arguments.append({
-                "value": {
-                    "modelType": "Property",
-                    "idShort": "requestId",
-                    "valueType": "xs:string",
-                    "value": request_id,
-                }
-            })
-            input_arguments.append({
-                "value": {
-                    "modelType": "Property",
-                    "idShort": "runId",
-                    "valueType": "xs:string",
-                    "value": job["run_id"],
-                }
-            })
-            body = {
-                "inputArguments": input_arguments,
-                "inoutputArguments": [],
-                "requestedTimeout": int(self.config.http_timeout_seconds * 1000)
-            }
-            t2_ms = int(time.time() * 1000)
-            selected_station_id = selected_route["StationId"]
-            normalized_station_id = normalize_station_id(selected_station_id)
-
-            # No await is allowed between these checks and additions. This makes
-            # the local reservation atomic with respect to other asyncio jobs.
-            if robot_key in self.reserved_robots:
-                print(
-                    f"[ORCHESTRATOR] Rejected robot {robot_id}: "
-                    "reservation was acquired by another job during discovery"
-                )
-                continue
-            if normalized_station_id and normalized_station_id in self.reserved_stations:
-                print(
-                    f"[ORCHESTRATOR] Rejected route on robot {robot_id}: "
-                    f"station {selected_station_id} is already reserved"
-                )
-                continue
-
-            self.reserved_robots.add(robot_key)
-            if normalized_station_id:
-                self.reserved_stations.add(normalized_station_id)
-            dispatch_payload = {
-                "token": job.get("token"),
-                "station_id": selected_station_id,
-                "source_position": selected_route["SourcePosition"],
-                "target_position": selected_route["TargetPosition"],
-                "sensor": triggering_sensor,
-                "sensor_key": triggering_sensor_key,
-                "t1_ms": job.get("t1_ms"),
-                "t2_ms": t2_ms,
-                "run_id": job.get("run_id"),
-                "robot_skills_submodel_b64": robot.skills_submodel_b64,
-                "robot_key": robot_key,
-                "target_operation": target_op,
-                "selected_route": selected_route["route_id"],
-                "operation_inputs": {
-                    id_short: details["value"]
-                    for id_short, details in operation_inputs.items()
-                },
-                "invoke_url": f"{skills_url}/submodel-elements/{target_op}/invoke",
-                "body": body,
-                "request_id": request_id,
-            }
-            try:
-                await self.dispatch_queue.put(dispatch_payload)
-            except BaseException:
-                self.reserved_robots.discard(robot_key)
-                if normalized_station_id:
-                    self.reserved_stations.discard(normalized_station_id)
-                raise
-            print(
-                f"[ORCHESTRATOR] Reserved robot {robot_id} as {robot_key}; "
-                f"queued operation={target_op} inputs={dispatch_payload['operation_inputs']}"
-            )
-            return
-        
-        if time.monotonic() < deadline:
-            print(
-                f"[ORCHESTRATOR] Robot unavailable for {triggering_sensor}; "
-                f"retrying in {self.config.job_retry_seconds:.1f}s"
-            )
-            asyncio.create_task(self._retry_job_later(job))
+            await self._dispatch_to_robot(job, selected)
             return
 
-        print(
-            f"[ORCHESTRATOR] Job for {triggering_sensor} timed out after "
-            f"{self.config.job_timeout_seconds:.1f}s"
-        )
-        await self._log_request_status(job, "timeout")
-        self.active_jobs.discard(job["token"])
+        if len(capable_candidates) == 1:
+            robot_key = capable_candidates[0]["robot"].state_submodel_b64
+            await self._queue_pending_job(
+                job,
+                capable_candidates,
+                robot_key,
+            )
+            return
+
+        await self._queue_pending_job(job, capable_candidates)
 
     async def dispatch_factory_job(self, dispatch_job: dict) -> None:
         try:
@@ -557,6 +847,11 @@ class FactoryOrchestrator:
             raise
 
     async def _dispatch_factory_job(self, dispatch_job: dict) -> None:
+        if not self._station_is_ready(dispatch_job.get("station_id") or ""):
+            self.reserved_robots.discard(dispatch_job.get("robot_key"))
+            await self._queue_station_pending_job(dispatch_job)
+            return
+
         print(
             "[ORCHESTRATOR] Dispatching "
             f"operation={dispatch_job.get('target_operation')} "

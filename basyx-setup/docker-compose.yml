@@ -209,6 +209,8 @@ services:
       - MQTT_TOPIC=sm-repository/+/submodels/+/submodelElements/+/updated
       - OPERATION_REPLY_TOPIC=simulation/+/replies/+
       - HTTP_TIMEOUT_SECONDS=8
+      - QUEUE_TIMEOUT_SECONDS=${QUEUE_TIMEOUT_SECONDS:-60}
+      - OPERATION_TIMEOUT_SECONDS=${OPERATION_TIMEOUT_SECONDS:-60}
       - STATION_REGISTRY_FILE=/config/stations.json
       - ORCHESTRATOR_LOG_CSV_PATH=/app/orchestrator_logs.csv
       - ORCHESTRATOR_SUMMARY_CSV_PATH=/app/orchestrator_summary.csv

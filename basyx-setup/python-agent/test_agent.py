@@ -88,6 +88,8 @@ class FactoryOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         config = agent.AgentConfig(
             station_registry_file="",
             job_timeout_seconds=30,
+            queue_timeout_seconds=30,
+            operation_timeout_seconds=30,
             invoke_retry_count=1,
             orchestrator_log_csv_path=str(self.log_path),
             orchestrator_summary_csv_path=str(temp_path / "summary.csv"),
@@ -107,6 +109,14 @@ class FactoryOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         return fake_client
 
     def make_job(self, station_id="Station_01", token="job-1", sensor_key="sensor-1"):
+        self.orchestrator.server_online = True
+        self.orchestrator.server_instance_id = "test-server"
+        self.orchestrator.station_statuses[agent.normalize_station_id(station_id)] = {
+            "stationId": station_id,
+            "online": True,
+            "robotReady": True,
+            "serverInstanceId": "test-server",
+        }
         return {
             "station_id": station_id,
             "sensor": "Sensor_BoxPresent",
@@ -116,6 +126,125 @@ class FactoryOrchestratorTests(unittest.IsolatedAsyncioTestCase):
             "deadline": time.monotonic() - 1,
             "required_operation": "ExecuteMoveBox",
         }
+
+    async def test_job_waits_until_station_is_ready(self):
+        job = self.make_job()
+        job["deadline"] = time.monotonic() + 30
+        self.orchestrator.server_online = False
+        self.orchestrator.station_statuses.clear()
+
+        await self.orchestrator.process_factory_job(job)
+
+        self.assertEqual(
+            list(self.orchestrator.pending_by_station["station_01"]),
+            [job],
+        )
+        await self.orchestrator.handle_station_status(
+            "simulation/Station_01/status",
+            json.dumps(
+                {
+                    "stationId": "Station_01",
+                    "online": True,
+                    "robotReady": True,
+                    "serverInstanceId": "new-server",
+                }
+            ),
+        )
+        self.assertTrue(self.orchestrator.job_queue.empty())
+
+        await self.orchestrator.handle_server_status(
+            json.dumps(
+                {
+                    "online": True,
+                    "serverInstanceId": "new-server",
+                }
+            )
+        )
+
+        self.assertIs(self.orchestrator.job_queue.get_nowait(), job)
+        self.assertNotIn("station_01", self.orchestrator.pending_by_station)
+
+    async def test_started_job_is_not_retried_when_station_disconnects(self):
+        robot = agent.RobotEndpoints("state-r1", "skills-r1", "Station_01")
+        self.configure(
+            [robot],
+            {
+                "skills-r1": {"routes": [route("Station_01")]},
+                "state-r1": {"routes": [], "moving": False, "fault": False},
+            },
+        )
+        await self.orchestrator.process_factory_job(self.make_job())
+        dispatch = self.orchestrator.dispatch_queue.get_nowait()
+        await self.orchestrator.lifecycle.begin_dispatch(dispatch)
+        await self.orchestrator.handle_operation_ack(
+            json.dumps(
+                {
+                    "requestId": dispatch["request_id"],
+                    "stationId": "Station_01",
+                    "status": "started",
+                }
+            )
+        )
+
+        await self.orchestrator.handle_station_status(
+            "simulation/Station_01/status",
+            json.dumps(
+                {
+                    "stationId": "Station_01",
+                    "online": True,
+                    "robotReady": False,
+                    "serverInstanceId": "test-server",
+                }
+            ),
+        )
+
+        self.assertNotIn(dispatch["request_id"], self.orchestrator.lifecycle_by_request_id)
+        self.assertFalse(self.orchestrator.pending_by_station)
+        self.assertNotIn("state-r1", self.orchestrator.reserved_robots)
+
+    async def test_unstarted_job_is_requeued_when_station_disconnects(self):
+        robot = agent.RobotEndpoints("state-r1", "skills-r1", "Station_01")
+        self.configure(
+            [robot],
+            {
+                "skills-r1": {"routes": [route("Station_01")]},
+                "state-r1": {"routes": [], "moving": False, "fault": False},
+            },
+        )
+        await self.orchestrator.process_factory_job(self.make_job())
+        dispatch = self.orchestrator.dispatch_queue.get_nowait()
+        await self.orchestrator.lifecycle.begin_dispatch(dispatch)
+
+        await self.orchestrator.handle_station_status(
+            "simulation/Station_01/status",
+            json.dumps(
+                {
+                    "stationId": "Station_01",
+                    "online": True,
+                    "robotReady": False,
+                    "serverInstanceId": "test-server",
+                }
+            ),
+        )
+
+        self.assertEqual(
+            len(self.orchestrator.pending_by_station["station_01"]),
+            1,
+        )
+        await self.orchestrator.handle_station_status(
+            "simulation/Station_01/status",
+            json.dumps(
+                {
+                    "stationId": "Station_01",
+                    "online": True,
+                    "robotReady": True,
+                    "serverInstanceId": "test-server",
+                }
+            ),
+        )
+
+        requeued = self.orchestrator.job_queue.get_nowait()
+        self.assertEqual(requeued["request_id"], dispatch["request_id"])
 
     async def test_cross_station_route_overrides_robot_home_station(self):
         robot = agent.RobotEndpoints("state-r2", "skills-r2", "Station_02")
@@ -212,6 +341,114 @@ class FactoryOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.orchestrator.dispatch_queue.qsize(), 1)
         self.assertEqual(self.orchestrator.reserved_robots, {"state-r1"})
 
+    async def test_sensor_rearms_before_previous_operation_completes(self):
+        self.orchestrator.station_by_conveyor_submodel = {
+            "conveyor-1": "Station_01"
+        }
+
+        await self.orchestrator.handle_event(
+            "conveyor-1",
+            "Sensor_BoxPresent",
+            "true",
+            "topic",
+            1,
+        )
+        first_job = self.orchestrator.job_queue.get_nowait()
+        await self.orchestrator.handle_event(
+            "conveyor-1",
+            "Sensor_BoxPresent",
+            "false",
+            "topic",
+            2,
+        )
+        await self.orchestrator.handle_event(
+            "conveyor-1",
+            "Sensor_BoxPresent",
+            "true",
+            "topic",
+            3,
+        )
+        second_job = self.orchestrator.job_queue.get_nowait()
+
+        self.assertTrue(first_job["sensor_clear"])
+        self.assertFalse(second_job["sensor_clear"])
+        self.assertNotEqual(first_job["token"], second_job["token"])
+        self.assertEqual(len(self.orchestrator.active_jobs), 2)
+
+    async def test_only_capable_busy_robot_gets_fifo_pending_job(self):
+        robot = agent.RobotEndpoints("state-r1", "skills-r1", "Station_01")
+        self.configure(
+            [robot],
+            {
+                "skills-r1": {"routes": [route("Station_01")]},
+                "state-r1": {"routes": [], "moving": True, "fault": False},
+            },
+        )
+        job = self.make_job()
+        job["deadline"] = time.monotonic() + 30
+
+        await self.orchestrator.process_factory_job(job)
+
+        self.assertEqual(
+            list(self.orchestrator.pending_by_robot["state-r1"]),
+            [job],
+        )
+        self.assertTrue(self.orchestrator.dispatch_queue.empty())
+
+        self.orchestrator.reserved_robots.discard("state-r1")
+        await self.orchestrator._schedule_next_for_robot("state-r1")
+
+        dispatch = self.orchestrator.dispatch_queue.get_nowait()
+        self.assertEqual(dispatch["request_id"], job["request_id"])
+        self.assertEqual(dispatch["robot_key"], "state-r1")
+
+    async def test_idle_capable_robot_is_selected_over_busy_capable_robot(self):
+        robots = [
+            agent.RobotEndpoints("state-r1", "skills-r1", "Station_01"),
+            agent.RobotEndpoints("state-r2", "skills-r2", "Station_02"),
+        ]
+        self.configure(
+            robots,
+            {
+                "skills-r1": {"routes": [route("Station_01")]},
+                "state-r1": {"routes": [], "moving": True, "fault": False},
+                "skills-r2": {"routes": [route("Station_01")]},
+                "state-r2": {"routes": [], "moving": False, "fault": False},
+            },
+        )
+
+        await self.orchestrator.process_factory_job(self.make_job())
+
+        dispatch = self.orchestrator.dispatch_queue.get_nowait()
+        self.assertEqual(dispatch["robot_key"], "state-r2")
+        self.assertFalse(self.orchestrator.pending_unassigned)
+
+    async def test_multiple_busy_capable_robots_use_shared_pending_queue(self):
+        robots = [
+            agent.RobotEndpoints("state-r1", "skills-r1", "Station_01"),
+            agent.RobotEndpoints("state-r2", "skills-r2", "Station_02"),
+        ]
+        self.configure(
+            robots,
+            {
+                "skills-r1": {"routes": [route("Station_01")]},
+                "state-r1": {"routes": [], "moving": True, "fault": False},
+                "skills-r2": {"routes": [route("Station_01")]},
+                "state-r2": {"routes": [], "moving": True, "fault": False},
+            },
+        )
+        job = self.make_job()
+        job["deadline"] = time.monotonic() + 30
+
+        await self.orchestrator.process_factory_job(job)
+
+        self.assertEqual(list(self.orchestrator.pending_unassigned), [job])
+        await self.orchestrator._schedule_next_for_robot("state-r2")
+
+        dispatch = self.orchestrator.dispatch_queue.get_nowait()
+        self.assertEqual(dispatch["robot_key"], "state-r2")
+        self.assertFalse(self.orchestrator.pending_unassigned)
+
     async def test_reservation_released_after_success_and_failure(self):
         for status_code in (200, 400):
             with self.subTest(status_code=status_code):
@@ -267,7 +504,6 @@ class FactoryOrchestratorTests(unittest.IsolatedAsyncioTestCase):
                     )
 
                 self.assertNotIn("state-r1", self.orchestrator.reserved_robots)
-                self.assertNotIn("station_01", self.orchestrator.reserved_stations)
 
     async def test_reservation_released_when_dispatch_is_cancelled(self):
         robot = agent.RobotEndpoints("state-r1", "skills-r1", "Station_01")
@@ -289,7 +525,6 @@ class FactoryOrchestratorTests(unittest.IsolatedAsyncioTestCase):
             await task
 
         self.assertNotIn("state-r1", self.orchestrator.reserved_robots)
-        self.assertNotIn("station_01", self.orchestrator.reserved_stations)
 
     async def test_existing_robot01_and_robot02_station_routes_still_select(self):
         robots = [

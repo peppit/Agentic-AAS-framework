@@ -17,10 +17,24 @@ class AgentConfig:
         "OPERATION_REPLY_TOPIC",
         "simulation/+/replies/+",
     )
+    server_status_topic: str = os.getenv(
+        "SERVER_STATUS_TOPIC",
+        "simulation/server/status",
+    )
+    station_status_topic: str = os.getenv(
+        "STATION_STATUS_TOPIC",
+        "simulation/+/status",
+    )
     basyx_base_url: str = os.getenv("BASYX_BASE_URL", "http://aas-env:8081")
     http_timeout_seconds: float = float(os.getenv("HTTP_TIMEOUT_SECONDS", "8"))
     job_retry_seconds: float = float(os.getenv("JOB_RETRY_SECONDS", "0.5"))
     job_timeout_seconds: float = float(os.getenv("JOB_TIMEOUT_SECONDS", "60"))
+    queue_timeout_seconds: float = float(
+        os.getenv("QUEUE_TIMEOUT_SECONDS", os.getenv("JOB_TIMEOUT_SECONDS", "60"))
+    )
+    operation_timeout_seconds: float = float(
+        os.getenv("OPERATION_TIMEOUT_SECONDS", os.getenv("JOB_TIMEOUT_SECONDS", "60"))
+    )
     invoke_retry_count: int = int(os.getenv("INVOKE_RETRY_COUNT", "3"))
     station_registry_file: str = os.getenv("STATION_REGISTRY_FILE", "")
     orchestrator_log_csv_path: str = os.getenv(
