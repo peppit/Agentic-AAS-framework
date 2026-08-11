@@ -30,11 +30,13 @@ class FakeHttpClient:
         self.robot_data = robot_data
         self.post_status = post_status
         self.posts = []
+        self.gets = []
         self.block_posts = block_posts
         self.post_started = asyncio.Event()
         self.release_post = asyncio.Event()
 
     async def get(self, url):
+        self.gets.append(url)
         robot_id = next((key for key in self.robot_data if key in url), None)
         if robot_id is None:
             return FakeResponse(404)
@@ -422,6 +424,27 @@ class FactoryOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         dispatch = self.orchestrator.dispatch_queue.get_nowait()
         self.assertEqual(dispatch["robot_key"], "state-r2")
         self.assertFalse(self.orchestrator.pending_unassigned)
+
+    async def test_search_stops_after_first_idle_capable_robot(self):
+        robots = [
+            agent.RobotEndpoints("state-r1", "skills-r1", "Station_01"),
+            agent.RobotEndpoints("state-r2", "skills-r2", "Station_02"),
+        ]
+        fake = self.configure(
+            robots,
+            {
+                "skills-r1": {"routes": [route("Station_01")]},
+                "state-r1": {"routes": [], "moving": False, "fault": False},
+                "skills-r2": {"routes": [route("Station_01")]},
+                "state-r2": {"routes": [], "moving": False, "fault": False},
+            },
+        )
+
+        await self.orchestrator.process_factory_job(self.make_job())
+
+        dispatch = self.orchestrator.dispatch_queue.get_nowait()
+        self.assertEqual(dispatch["robot_key"], "state-r1")
+        self.assertFalse(any("skills-r2" in url or "state-r2" in url for url in fake.gets))
 
     async def test_multiple_busy_capable_robots_use_shared_pending_queue(self):
         robots = [

@@ -742,7 +742,7 @@ class FactoryOrchestrator:
             await self._queue_station_pending_job(job)
             return
 
-        semantic_candidates = []
+        capable_candidates = []
         for robot in self.robots:
             robot_id = robot.skills_submodel_b64
             print(
@@ -771,12 +771,7 @@ class FactoryOrchestrator:
                     f"[ORCHESTRATOR] Rejected robot {robot_id}: no matching station-aware route"
                 )
                 continue
-            semantic_candidates.append({"robot": robot, "route": selected_route})
-
-        capable_candidates = []
-        for candidate in semantic_candidates:
-            robot = candidate["robot"]
-            robot_id = robot.skills_submodel_b64
+            candidate = {"robot": robot, "route": selected_route}
             state_url = (
                 f"{self.config.basyx_base_url}/submodels/"
                 f"{robot.state_submodel_b64}"
@@ -800,25 +795,16 @@ class FactoryOrchestrator:
             candidate["moving"] = moving
             capable_candidates.append(candidate)
 
-        idle_candidates = [
-            candidate
-            for candidate in capable_candidates
-            if candidate["moving"] is False
-            and candidate["robot"].state_submodel_b64 not in self.reserved_robots
-        ]
-        if idle_candidates:
-            selected = idle_candidates[0]
-            selected_route = selected["route"]
-            robot_id = selected["robot"].skills_submodel_b64
-            print(
-                f"[ORCHESTRATOR] Selected route {selected_route['route_id'] or '<unnamed>'} "
-                f"on robot {robot_id}: station={selected_route['StationId']} "
-                f"source={selected_route['SourcePosition'] or 'n/a'} "
-                f"target={selected_route['TargetPosition'] or 'n/a'} "
-                f"operation={selected_route['TargetOperation']}"
-            )
-            await self._dispatch_to_robot(job, selected)
-            return
+            if moving is False and robot.state_submodel_b64 not in self.reserved_robots:
+                print(
+                    f"[ORCHESTRATOR] Selected route {selected_route['route_id'] or '<unnamed>'} "
+                    f"on robot {robot_id}: station={selected_route['StationId']} "
+                    f"source={selected_route['SourcePosition'] or 'n/a'} "
+                    f"target={selected_route['TargetPosition'] or 'n/a'} "
+                    f"operation={selected_route['TargetOperation']}"
+                )
+                await self._dispatch_to_robot(job, candidate)
+                return
 
         if len(capable_candidates) == 1:
             robot_key = capable_candidates[0]["robot"].state_submodel_b64
