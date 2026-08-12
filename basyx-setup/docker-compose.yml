@@ -207,6 +207,7 @@ services:
       - MQTT_HOST=mosquitto
       - MQTT_PORT=1883
       - MQTT_TOPIC=sm-repository/+/submodels/+/submodelElements/+/updated
+      - ROBOT_FAULT_TOPIC_PREFIX=${ROBOT_FAULT_TOPIC_PREFIX:-factory/robots}
       - OPERATION_REPLY_TOPIC=simulation/+/replies/+
       - HTTP_TIMEOUT_SECONDS=8
       - QUEUE_TIMEOUT_SECONDS=${QUEUE_TIMEOUT_SECONDS:-60}

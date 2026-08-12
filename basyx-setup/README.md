@@ -159,11 +159,14 @@ Current behavior:
 4. Latches runtime state by station and correlates commands with their `requestId`.
 5. Rearms a station only after its operation reports `completed` and its sensor reports `false`.
 6. Polls `IsMoving` as a diagnostic/compatibility monitor.
+7. Publishes retained robot fault-state transitions to
+   `factory/robots/<robotId>/fault` for external subscribers.
 
 Key python-agent environment variables (see [docker-compose.yml](docker-compose.yml)):
 
 1. BASYX_BASE_URL
-2. MQTT_HOST / MQTT_PORT / MQTT_TOPIC / OPERATION_REPLY_TOPIC
+2. MQTT_HOST / MQTT_PORT / MQTT_TOPIC / OPERATION_REPLY_TOPIC /
+   ROBOT_FAULT_TOPIC_PREFIX
 3. STATION_REGISTRY_FILE
 4. JOB_TIMEOUT_SECONDS / INVOKE_RETRY_COUNT
 

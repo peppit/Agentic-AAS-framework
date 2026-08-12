@@ -325,6 +325,24 @@ class FactoryOrchestratorTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(self.orchestrator.dispatch_queue.empty())
                 self.assertFalse(self.orchestrator.reserved_robots)
 
+    async def test_fault_state_publishes_transitions_only(self):
+        robot = agent.RobotEndpoints("state-r1", "skills-r1", "Station_01")
+        published = []
+
+        async def publisher(topic, payload):
+            published.append((topic, json.loads(payload)))
+
+        self.orchestrator.fault_state_publisher = publisher
+        await self.orchestrator._publish_robot_fault_state(robot, True, 1000)
+        await self.orchestrator._publish_robot_fault_state(robot, True, 2000)
+        await self.orchestrator._publish_robot_fault_state(robot, False, 3000)
+
+        self.assertEqual(len(published), 2)
+        self.assertEqual(published[0][0], "factory/robots/state-r1/fault")
+        self.assertTrue(published[0][1]["faultActive"])
+        self.assertFalse(published[1][1]["faultActive"])
+        self.assertEqual(published[1][1]["observedAtMs"], 3000)
+
     async def test_simultaneous_jobs_cannot_reserve_same_robot(self):
         robot = agent.RobotEndpoints("state-r1", "skills-r1", "Station_01")
         self.configure(

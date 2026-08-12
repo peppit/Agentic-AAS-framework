@@ -25,6 +25,10 @@ class AgentConfig:
         "STATION_STATUS_TOPIC",
         "simulation/+/status",
     )
+    robot_fault_topic_prefix: str = os.getenv(
+        "ROBOT_FAULT_TOPIC_PREFIX",
+        "factory/robots",
+    )
     basyx_base_url: str = os.getenv("BASYX_BASE_URL", "http://aas-env:8081")
     http_timeout_seconds: float = float(os.getenv("HTTP_TIMEOUT_SECONDS", "8"))
     job_retry_seconds: float = float(os.getenv("JOB_RETRY_SECONDS", "0.5"))

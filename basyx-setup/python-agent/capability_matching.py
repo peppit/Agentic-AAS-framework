@@ -80,15 +80,6 @@ def match_capability_route(
             continue
 
         route_id = parsed_route["route_id"] or "<unnamed>"
-        route_station_id = parsed_route["StationId"]
-        print(
-            f"[ORCHESTRATOR] Robot {robot_id} route={route_id} "
-            f"advertised_station={route_station_id or 'missing'} "
-            f"requested_station={station_id or 'missing'} "
-            f"source={parsed_route['SourcePosition'] or 'missing'} "
-            f"target={parsed_route['TargetPosition'] or 'missing'} "
-            f"operation={parsed_route['TargetOperation'] or 'missing'}"
-        )
 
         rejection = _route_rejection(
             parsed_route,

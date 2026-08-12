@@ -59,6 +59,15 @@ async def run_agent(config: AgentConfig) -> None:
                     hostname=config.mqtt_host,
                     port=config.mqtt_port,
                 ) as client:
+                    async def publish_fault_state(topic: str, payload: str) -> None:
+                        await client.publish(
+                            topic,
+                            payload,
+                            qos=1,
+                            retain=True,
+                        )
+
+                    orchestrator.fault_state_publisher = publish_fault_state
                     await client.subscribe(config.mqtt_topic)
                     await client.subscribe(config.operation_reply_topic)
                     await client.subscribe(config.server_status_topic)

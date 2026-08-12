@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import csv
 import json
 import time
@@ -60,6 +61,8 @@ class FactoryOrchestrator:
         self.server_online = False
         self.server_instance_id = ""
         self.station_statuses: dict[str, dict] = {}
+        self.fault_state_publisher = None
+        self.published_fault_states: dict[str, bool] = {}
         self.log_lock = asyncio.Lock()
         self.logged_samples = 0
         self.log_headers = [
@@ -248,8 +251,77 @@ class FactoryOrchestrator:
     ) -> dict[str, str]:
         return build_station_bindings(station_registry)
 
+    @staticmethod
+    def _robot_id(robot: RobotEndpoints) -> str:
+        encoded = robot.state_submodel_b64
+        try:
+            padding = "=" * (-len(encoded) % 4)
+            decoded = base64.urlsafe_b64decode(encoded + padding).decode("utf-8")
+            robot_id = decoded.rstrip("/").rsplit("/", 1)[-1]
+        except (ValueError, UnicodeDecodeError):
+            robot_id = encoded
+        return robot_id.replace("/", "_").replace("+", "_").replace("#", "_")
+
+    async def _publish_robot_fault_state(
+        self,
+        robot: RobotEndpoints,
+        fault_active: Optional[bool],
+        observed_at_ms: Optional[int] = None,
+    ) -> None:
+        if fault_active is None or self.fault_state_publisher is None:
+            return
+        robot_key = robot.state_submodel_b64
+        if self.published_fault_states.get(robot_key) is fault_active:
+            return
+
+        robot_id = self._robot_id(robot)
+        topic_prefix = self.config.robot_fault_topic_prefix.rstrip("/")
+        topic = f"{topic_prefix}/{robot_id}/fault"
+        payload = json.dumps(
+            {
+                "robotId": robot_id,
+                "stationId": robot.station_id,
+                "faultActive": fault_active,
+                "observedAtMs": observed_at_ms or int(time.time() * 1000),
+                "source": "RobotStateAAS",
+            },
+            separators=(",", ":"),
+        )
+        try:
+            await self.fault_state_publisher(topic, payload)
+        except Exception as exc:
+            print(
+                f"[ORCHESTRATOR] Failed to publish fault state for "
+                f"{robot_id}: {exc}"
+            )
+            return
+        self.published_fault_states[robot_key] = fault_active
+        print(
+            f"[ORCHESTRATOR] Published retained fault state "
+            f"robot={robot_id} faultActive={fault_active} topic={topic}"
+        )
+
 
     async def handle_event(self, submodel_b64: str, property_id: str, payload: str, mqtt_topic: str, received_at_ms: int) -> None:
+
+        if property_id == "FaultActive":
+            fault_active = parse_bool_value(payload)
+            robot = next(
+                (
+                    candidate
+                    for candidate in self.robots
+                    if candidate.state_submodel_b64
+                    == normalize_submodel_id(submodel_b64)
+                ),
+                None,
+            )
+            if robot is not None:
+                await self._publish_robot_fault_state(
+                    robot,
+                    fault_active,
+                    received_at_ms,
+                )
+            return
 
         if "Present" not in property_id and "Clear" not in property_id: 
             return
@@ -745,11 +817,6 @@ class FactoryOrchestrator:
         capable_candidates = []
         for robot in self.robots:
             robot_id = robot.skills_submodel_b64
-            print(
-                "[ORCHESTRATOR] Considering robot "
-                f"{robot_id} home_station={robot.station_id or 'unspecified'} "
-                f"requested_station={job_station_id or 'missing'} sensor={triggering_sensor}"
-            )
             skills_url = f"{self.config.basyx_base_url}/submodels/{robot.skills_submodel_b64}"
             routes = await fetch_supported_capabilities(
                 client,
@@ -767,9 +834,6 @@ class FactoryOrchestrator:
                 required_operation=required_operation,
             )
             if selected_route is None:
-                print(
-                    f"[ORCHESTRATOR] Rejected robot {robot_id}: no matching station-aware route"
-                )
                 continue
             candidate = {"robot": robot, "route": selected_route}
             state_url = (
@@ -779,6 +843,7 @@ class FactoryOrchestrator:
             fault_active = await self._read_robot_bool_state(
                 client, state_url, "FaultActive"
             )
+            await self._publish_robot_fault_state(robot, fault_active)
             if fault_active is not False:
                 print(
                     f"[ORCHESTRATOR] Rejected robot {robot_id}: "
@@ -865,7 +930,6 @@ class FactoryOrchestrator:
             await self._release_dispatch_job(dispatch_job, "operation invocation produced no response")
             return
 
-        print(f"[ORCHESTRATOR] Response status from robot: {response.status_code}")
 
         await self._log_request_status(
             dispatch_job,
