@@ -132,10 +132,11 @@ public class SimulationMachineOperationController {
     }
 
         @PostMapping(
-            value = "/simulation/robot/movebox",
+            value = "/simulation/robots/{robotId}/movebox",
             produces = MediaType.APPLICATION_JSON_VALUE)
         public ResponseEntity<Map<String, Object>> moveBox(
-            @RequestBody String input) {
+            @RequestBody String input,
+            @PathVariable("robotId") String robotId) {
         logger.info("Executing robot MoveBox operation");
 
         try {
@@ -174,7 +175,7 @@ public class SimulationMachineOperationController {
                 targetPosition);
             String payload = buildGenericCommandPayload(
                 requestId, runId, stationId, operation, params);
-            mqttPublisher.publishStationOperation(stationId, operation, payload);
+            mqttPublisher.publishStationOperation(robotId, operation, payload);
 
             Map<String, Object> response = new HashMap<>();
             response.put("status", "SUCCESS");

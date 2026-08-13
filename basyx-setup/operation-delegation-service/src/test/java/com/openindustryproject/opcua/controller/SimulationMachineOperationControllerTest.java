@@ -32,7 +32,7 @@ class SimulationMachineOperationControllerTest {
                 }
                 """;
 
-        ResponseEntity<Map<String, Object>> response = controller.moveBox(input);
+        ResponseEntity<Map<String, Object>> response = controller.moveBox(input, "Robot_02");
 
         assertEquals(200, response.getStatusCode().value());
         assertEquals("Station_01", response.getBody().get("stationId"));
@@ -41,7 +41,7 @@ class SimulationMachineOperationControllerTest {
 
         ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
         verify(publisher).publishStationOperation(
-                org.mockito.ArgumentMatchers.eq("Station_01"),
+                org.mockito.ArgumentMatchers.eq("Robot_02"),
                 org.mockito.ArgumentMatchers.eq("moveBox"),
                 payloadCaptor.capture());
 
