@@ -31,8 +31,11 @@ public class MqttCommandPublisherService {
     @Value("${simulation.mqtt.qos:1}")
     private int qos;
 
-    @Value("${simulation.mqtt.topic-template:simulation/{stationId}/command/{operation}}")
-    private String topicTemplate;
+    @Value("${simulation.mqtt.station-topic-template:simulation/{stationId}/operations/{operation}}")
+    private String stationTopicTemplate;
+
+    @Value("${simulation.mqtt.robot-topic-template:simulation/robots/{robotId}/operations/{operation}}")
+    private String robotTopicTemplate;
 
     private MqttClient client;
 
@@ -75,9 +78,20 @@ public class MqttCommandPublisherService {
     }
 
     public void publishStationOperation(String stationId, String operation, String payload) throws Exception {
-        String topic = topicTemplate
+
+        String topic = stationTopicTemplate
                 .replace("{stationId}", sanitizeTopicPart(stationId))
                 .replace("{operation}", sanitizeTopicPart(operation));
+
+        publish(topic, payload);
+    }
+
+    public void publishRobotOperation(String robotId, String operation, String payload) throws Exception {
+
+        String topic = robotTopicTemplate
+                .replace("{robotId}", sanitizeTopicPart(robotId))
+                .replace("{operation}", sanitizeTopicPart(operation));
+
         publish(topic, payload);
     }
 

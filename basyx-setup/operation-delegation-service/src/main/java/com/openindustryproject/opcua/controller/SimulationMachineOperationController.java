@@ -175,7 +175,7 @@ public class SimulationMachineOperationController {
                 targetPosition);
             String payload = buildGenericCommandPayload(
                 requestId, runId, stationId, operation, params);
-            mqttPublisher.publishStationOperation(robotId, operation, payload);
+            mqttPublisher.publishRobotOperation(robotId, operation, payload);
 
             Map<String, Object> response = new HashMap<>();
             response.put("status", "SUCCESS");

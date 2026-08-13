@@ -16,6 +16,7 @@ DEFAULT_SIGNALS = {
     "currentSpeed": ("conveyorSubmodelB64", "CurrentSpeed", "float"),
     "boxDetected": ("conveyorSubmodelB64", "Sensor_BoxPresent", "bool"),
     "isMoving": ("robotStateSubmodelB64", "IsMoving", "bool"),
+    "faultActive": ("robotStateSubmodelB64", "FaultActive", "bool"),
 }
 
 

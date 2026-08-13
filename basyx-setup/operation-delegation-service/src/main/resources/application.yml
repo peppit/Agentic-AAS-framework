@@ -16,4 +16,5 @@ simulation:
     broker-url: tcp://mosquitto:1883
     client-id: operation-delegation-service
     qos: 1
-    topic-template: simulation/{stationId}/operations/{operation}
+    station-topic-template: simulation/{stationId}/operations/{operation}
+    robot-topic-template: simulation/robots/{robotId}/operations/{operation}

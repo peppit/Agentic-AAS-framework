@@ -40,7 +40,7 @@ class SimulationMachineOperationControllerTest {
         assertEquals("Pallet_B", response.getBody().get("TargetPosition"));
 
         ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
-        verify(publisher).publishStationOperation(
+        verify(publisher).publishRobotOperation(
                 org.mockito.ArgumentMatchers.eq("Robot_02"),
                 org.mockito.ArgumentMatchers.eq("moveBox"),
                 payloadCaptor.capture());
