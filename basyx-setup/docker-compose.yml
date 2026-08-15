@@ -182,6 +182,8 @@ services:
       - MQTT_PORT=1883
       - MQTT_TELEMETRY_TOPIC=simulation/+/+
       - MQTT_DYNAMIC_TELEMETRY_TOPIC=factory/+/telemetry/+
+      - MQTT_ROBOT_TELEMETRY_TOPIC=factory/robots/+/telemetry/+
+      - MQTT_CONVEYOR_TELEMETRY_TOPIC=factory/conveyors/+/telemetry/+
       - MQTT_MANIFEST_TOPIC=factory/+/manifest
       - BASYX_BASE_URL=http://aas-env:8081
       - STATION_REGISTRY_FILE=/config/stations.json

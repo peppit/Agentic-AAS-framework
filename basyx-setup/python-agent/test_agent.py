@@ -7,6 +7,8 @@ import time
 import unittest
 from pathlib import Path
 
+from capability_matching import build_operation_inputs, parse_capability_route
+
 
 MODULE_PATH = Path(__file__).with_name("agent.py")
 SPEC = importlib.util.spec_from_file_location("factory_agent", MODULE_PATH)
@@ -248,7 +250,7 @@ class FactoryOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         requeued = self.orchestrator.job_queue.get_nowait()
         self.assertEqual(requeued["request_id"], dispatch["request_id"])
 
-    async def test_cross_station_route_overrides_robot_home_station(self):
+    async def test_cross_station_route_overrides_robot_physical_station(self):
         robot = agent.RobotEndpoints("state-r2", "skills-r2", "Station_02")
         self.configure(
             [robot],
@@ -628,14 +630,100 @@ class FactoryOrchestratorTests(unittest.IsolatedAsyncioTestCase):
                         "robot-state-3",
                         "robot-skills-3",
                         "Station_03",
+                        "Robot_03",
                     )
                 ],
             )
         finally:
             await orchestrator.close()
 
+    async def test_v2_registry_separates_assets_and_supports_shared_station(self):
+        registry_path = Path(self.tempdir.name) / "assets.json"
+        registry_path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": "2.0",
+                    "stations": {
+                        "station_01": {"stationId": "Station_01"},
+                        "station_02": {"stationId": "Station_02"},
+                    },
+                    "robots": {
+                        "robot_01": {
+                            "robotId": "Robot_01",
+                            "stateSubmodelB64": "robot-state-1",
+                            "skillsSubmodelB64": "robot-skills-1",
+                        },
+                        "robot_02": {
+                            "robotId": "Robot_02",
+                            "stateSubmodelB64": "robot-state-2",
+                            "skillsSubmodelB64": "robot-skills-2",
+                        },
+                    },
+                    "conveyors": {
+                        "conveyor_01": {
+                            "conveyorId": "Conveyor_01",
+                            "stateSubmodelB64": "conveyor-state-1",
+                        },
+                        "conveyor_02": {
+                            "conveyorId": "Conveyor_02",
+                            "stateSubmodelB64": "conveyor-state-2",
+                        },
+                    },
+                    "stationAssets": [
+                        {
+                            "stationId": "Station_01",
+                            "assetType": "robot",
+                            "assetId": "Robot_01",
+                        },
+                        {
+                            "stationId": "Station_01",
+                            "assetType": "robot",
+                            "assetId": "Robot_02",
+                        },
+                        {
+                            "stationId": "Station_01",
+                            "assetType": "conveyor",
+                            "assetId": "Conveyor_01",
+                        },
+                        {
+                            "stationId": "Station_02",
+                            "assetType": "conveyor",
+                            "assetId": "Conveyor_02",
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        temp_path = Path(self.tempdir.name)
+        orchestrator = agent.FactoryOrchestrator(
+            agent.AgentConfig(
+                station_registry_file=str(registry_path),
+                orchestrator_log_csv_path=str(temp_path / "v2-runs.csv"),
+                orchestrator_summary_csv_path=str(temp_path / "v2-summary.csv"),
+            )
+        )
+        try:
+            self.assertEqual(
+                orchestrator.station_by_conveyor_submodel,
+                {
+                    "conveyor-state-1": "Station_01",
+                    "conveyor-state-2": "Station_02",
+                },
+            )
+            self.assertEqual(
+                [robot.robot_id for robot in orchestrator.robots],
+                ["Robot_01", "Robot_02"],
+            )
+            self.assertEqual(
+                [robot.station_id for robot in orchestrator.robots],
+                ["Station_01", "Station_01"],
+            )
+        finally:
+            await orchestrator.close()
+
     def test_move_to_home_retains_fixed_home_arguments(self):
-        parsed = self.orchestrator._parse_capability_route(
+        parsed = parse_capability_route(
             route(
                 "Station_01",
                 sensor="Sensor_ClearRobot",
@@ -646,7 +734,7 @@ class FactoryOrchestratorTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        inputs = self.orchestrator._build_operation_inputs(parsed)
+        inputs = build_operation_inputs(parsed)
 
         self.assertEqual(inputs, {"move": {"value": True, "valueType": "xs:boolean"}})
         self.assertNotIn("StationId", inputs)

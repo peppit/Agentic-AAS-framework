@@ -438,6 +438,82 @@ public class MqttCommandBridgeService implements MqttCallback {
             return;
         }
 
+        JsonNode registryRobots = root.get("robots");
+        JsonNode registryConveyors = root.get("conveyors");
+        JsonNode stationAssets = root.get("stationAssets");
+        if (registryRobots != null && registryRobots.isObject()
+                && registryConveyors != null && registryConveyors.isObject()
+                && stationAssets != null && stationAssets.isArray()) {
+            Map<String, String> conveyorOperationsById = new HashMap<>();
+            registryConveyors.fields().forEachRemaining(entry -> {
+                JsonNode value = entry.getValue();
+                String conveyorId = textValue(value, "conveyorId");
+                if (conveyorId.isBlank()) {
+                    conveyorId = entry.getKey();
+                }
+                String operations = textValue(value, "operationsSubmodelB64");
+                if (!operations.isBlank()) {
+                    conveyorOperationsById.put(normalizeStationId(conveyorId), operations);
+                }
+            });
+
+            Map<String, String> robotSkillsById = new HashMap<>();
+            registryRobots.fields().forEachRemaining(entry -> {
+                JsonNode value = entry.getValue();
+                String robotId = textValue(value, "robotId");
+                if (robotId.isBlank()) {
+                    robotId = entry.getKey();
+                }
+                String skills = textValue(value, "skillsSubmodelB64");
+                if (!skills.isBlank()) {
+                    robotSkillsById.put(normalizeStationId(robotId), skills);
+                }
+            });
+
+            Map<String, String> conveyorByStation = new HashMap<>();
+            Map<String, String> robotByStation = new HashMap<>();
+            stationAssets.forEach(relation -> {
+                if (!relation.isObject()) {
+                    return;
+                }
+                String stationId = normalizeStationId(textValue(relation, "stationId"));
+                String assetId = normalizeStationId(textValue(relation, "assetId"));
+                String assetType = textValue(relation, "assetType");
+                if ("conveyor".equalsIgnoreCase(assetType)) {
+                    String operations = conveyorOperationsById.get(assetId);
+                    if (!stationId.isBlank() && operations != null) {
+                        conveyorByStation.putIfAbsent(stationId, operations);
+                    }
+                } else if ("robot".equalsIgnoreCase(assetType)) {
+                    String skills = robotSkillsById.get(assetId);
+                    if (!stationId.isBlank() && skills != null) {
+                        String existing = robotByStation.putIfAbsent(stationId, skills);
+                        if (existing != null && !existing.equals(skills)) {
+                            logger.warn(
+                                    "Multiple robots linked to station '{}'; "
+                                            + "the MQTT-first compatibility bridge uses the first one",
+                                    stationId);
+                        }
+                    }
+                }
+            });
+
+            registryStations.fields().forEachRemaining(entry -> {
+                JsonNode value = entry.getValue();
+                String stationId = textValue(value, "stationId");
+                if (stationId.isBlank()) {
+                    stationId = entry.getKey();
+                }
+                String normalized = normalizeStationId(stationId);
+                String conveyor = conveyorByStation.get(normalized);
+                String robot = robotByStation.get(normalized);
+                if (conveyor != null && robot != null) {
+                    stationBindings.put(normalized, new StationBinding(conveyor, robot));
+                }
+            });
+            return;
+        }
+
         registryStations.fields().forEachRemaining(entry -> {
             JsonNode value = entry.getValue();
             String stationId = entry.getKey();

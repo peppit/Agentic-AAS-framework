@@ -162,6 +162,14 @@ Current behavior:
 7. Publishes retained robot fault-state transitions to
    `factory/robots/<robotId>/fault` for external subscribers.
 
+The simulation publishes robot fault telemetry on
+`factory/robots/<robotId>/telemetry/faultActive`. The robot ID is resolved
+through `stations.json`, allowing fault telemetry to target a specific Robot
+State AAS independently of its station.
+
+Conveyor telemetry is similarly asset-scoped under
+`factory/conveyors/<conveyorId>/telemetry/<signal>`.
+
 Key python-agent environment variables (see [docker-compose.yml](docker-compose.yml)):
 
 1. BASYX_BASE_URL
@@ -173,29 +181,32 @@ Key python-agent environment variables (see [docker-compose.yml](docker-compose.
 The registry variable points to the shared `stations.json` file in the default
 Compose setup.
 
-## Add a Station
+## Asset Registry
 
-[stations.json](stations.json) is the canonical runtime registry used by the
-simulation manifest publisher, telemetry bridge, MQTT operation bridge, and
-orchestrator. Station identifiers are explicit and may use any name; there is
-no positional or `station_01`/`station_02` inference.
+[stations.json](stations.json) is the canonical bootstrap registry used by the
+telemetry bridge, MQTT operation bridge, and orchestrator. Schema version 2
+separates `stations`, `robots`, and `conveyors`. The `stationAssets` list links
+robots and conveyors to their physical stations using only `stationId`,
+`assetType`, and `assetId`. Robot-to-station operation eligibility is separate:
+it comes from the routes in each robot's `SupportedCapabilities` Skills AAS.
 
-To add a station:
+To add assets:
 
-1. Add one entry below `stations` with a unique `stationId` and the station's
-   conveyor telemetry, conveyor operations, robot state, and robot skills
+1. Add each station once below `stations`.
+2. Add each robot once below `robots`, with its state and skills submodel IDs.
+3. Add each conveyor once below `conveyors`, with its state and operations
    submodel IDs.
-2. Add or upload the corresponding conveyor AASX. Add a robot AASX only when the
-   station introduces a new robot.
-3. Add a `SupportedCapabilities` route for the station to a robot skills
-   submodel.
-4. Add the station to the OIP scene and map its OPC UA tags.
-5. Restart `server.py` and `python-agent`, which cache registry data. Restart
+4. Link each robot and conveyor to its physical station in `stationAssets`.
+5. Add `SupportedCapabilities` routes to make a robot eligible for one or more
+   stations. Several robots may declare routes for the same station.
+6. Add or upload the corresponding AASX packages and map the assets in OIP.
+7. Restart `mqtt-aas-bridge` and `python-agent`, which cache bootstrap data. Restart
    `mqtt-operation-bridge` as well only when the `mqtt-first` profile is in use.
 
-When `STATION_IDS` is unset, `server.py` creates every station declared in the
-registry. Set `STATION_IDS` to a comma-separated subset to run only selected
-stations.
+`server.py` currently represents one simulated robot and conveyor controller
+per station. The separated registry and telemetry paths support independently
+identified assets, while simulating several physical controllers inside one
+station requires a corresponding OIP scene/controller model.
 
 ## Include Your Own Asset Administration Shells
 

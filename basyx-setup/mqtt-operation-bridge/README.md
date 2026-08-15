@@ -81,16 +81,40 @@ Relevant fields are:
 
 ```json
 {
-  "schemaVersion": "1.0",
+  "schemaVersion": "2.0",
   "stations": {
-    "station_03": {
-      "stationId": "Station_03",
-      "conveyorOperationsSubmodelB64": "<operations-submodel>",
-      "robotSkillsSubmodelB64": "<skills-submodel>"
+    "station_03": {"stationId": "Station_03"}
+  },
+  "robots": {
+    "robot_03": {
+      "robotId": "Robot_03",
+      "skillsSubmodelB64": "<skills-submodel>"
     }
-  }
+  },
+  "conveyors": {
+    "conveyor_03": {
+      "conveyorId": "Conveyor_03",
+      "operationsSubmodelB64": "<operations-submodel>"
+    }
+  },
+  "stationAssets": [
+    {
+      "stationId": "Station_03",
+      "assetType": "robot",
+      "assetId": "Robot_03"
+    },
+    {
+      "stationId": "Station_03",
+      "assetType": "conveyor",
+      "assetId": "Conveyor_03"
+    }
+  ]
 }
 ```
+
+The MQTT-first compatibility path is station-addressed and therefore uses the
+first robot linked to the station in `stationAssets`. Primary agent-driven
+delegation selects among all capable robots using their Skills AAS routes.
 
 Runtime invoke URL pattern:
 

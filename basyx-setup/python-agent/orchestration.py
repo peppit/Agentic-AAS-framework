@@ -20,14 +20,13 @@ from aas_access import (
 from capability_matching import (
     build_operation_inputs,
     match_capability_route,
-    parse_capability_route,
 )
 from config_models import (
     AgentConfig,
     RobotEndpoints,
     build_robot_endpoints,
     build_station_bindings,
-    load_station_registry,
+    load_asset_registry,
     normalize_station_id,
     normalize_submodel_id,
     parse_bool_value,
@@ -94,11 +93,11 @@ class FactoryOrchestrator:
         self.summary_buffer: list[dict] = []
         self.log_path = Path(self.config.orchestrator_log_csv_path)
         self.summary_path = Path(self.config.orchestrator_summary_csv_path)
-        station_registry = load_station_registry(self.config.station_registry_file)
-        self.station_by_conveyor_submodel = build_station_bindings(station_registry)
+        asset_registry = load_asset_registry(self.config.station_registry_file)
+        self.station_by_conveyor_submodel = build_station_bindings(asset_registry)
         self._ensure_csv_file(self.log_path, self.log_headers, check_headers=True)
         self._ensure_csv_file(self.summary_path, self.summary_headers)
-        self.robots = build_robot_endpoints(station_registry)
+        self.robots = build_robot_endpoints(asset_registry)
         if not self.robots:
             print("[ORCHESTRATOR] Warning: no robot bindings configured; dispatch cannot start")
         print(f"[ORCHESTRATOR] Measurement run_id={self.run_id}")
@@ -238,21 +237,10 @@ class FactoryOrchestrator:
         await self._log_and_print(row)
         request["latency_logged"] = True
 
-    def _load_station_registry(self, file_path: str) -> dict[str, dict]:
-        return load_station_registry(file_path)
-
-    def _build_robot_endpoints(
-        self, station_registry: dict[str, dict]
-    ) -> list[RobotEndpoints]:
-        return build_robot_endpoints(station_registry)
-
-    def _build_station_bindings(
-        self, station_registry: dict[str, dict]
-    ) -> dict[str, str]:
-        return build_station_bindings(station_registry)
-
     @staticmethod
     def _robot_id(robot: RobotEndpoints) -> str:
+        if robot.robot_id:
+            return robot.robot_id.replace("/", "_").replace("+", "_").replace("#", "_")
         encoded = robot.state_submodel_b64
         try:
             padding = "=" * (-len(encoded) % 4)
@@ -366,7 +354,7 @@ class FactoryOrchestrator:
                 )
                 if lifecycle is not None:
                     lifecycle["sensor_clear"] = True
-                    await self._try_finalize_lifecycle(lifecycle)
+                    await self.lifecycle.try_finalize(lifecycle)
             if box_queue is not None and not box_queue:
                 self.box_queues_by_station.pop(station_key, None)
             print(
@@ -406,7 +394,7 @@ class FactoryOrchestrator:
             job = await self.job_queue.get()
             try:
                 await self.process_factory_job(job)
-            except Exception as e:
+            except Exception:
                 traceback.print_exc()
                 await self._log_request_status(job, "failed")
                 if token := job.get("token"): self.active_jobs.discard(token)
@@ -422,16 +410,10 @@ class FactoryOrchestrator:
             finally:
                 self.dispatch_queue.task_done()
 
-    async def _expire_lifecycle(self, request_id: str) -> None:
-        await self.lifecycle.expire(request_id)
-
     async def _release_dispatch_job(self, dispatch_job: dict, reason: str) -> None:
         robot_key = await self.lifecycle.release(dispatch_job, reason)
         if robot_key:
             await self._schedule_next_for_robot(robot_key)
-
-    async def _try_finalize_lifecycle(self, lifecycle: dict) -> None:
-        await self.lifecycle.try_finalize(lifecycle)
 
     async def handle_operation_ack(self, payload: str) -> None:
         robot_key = await self.lifecycle.handle_ack(payload)
@@ -584,20 +566,6 @@ class FactoryOrchestrator:
         elif not previously_ready and ready:
             await self._drain_station_pending(station_key)
 
-    async def _read_robot_bool_state(
-        self,
-        client: httpx.AsyncClient,
-        state_url: str,
-        property_id: str,
-    ) -> Optional[bool]:
-        return await read_robot_bool_state(client, state_url, property_id)
-
-    def _parse_capability_route(self, route: object) -> Optional[dict]:
-        return parse_capability_route(route)
-
-    def _build_operation_inputs(self, selected_route: dict) -> dict[str, dict]:
-        return build_operation_inputs(selected_route)
-
     def _cancel_pending_timeout(self, request_id: str) -> None:
         timeout_task = self.pending_timeout_tasks.pop(request_id, None)
         if timeout_task and timeout_task is not asyncio.current_task():
@@ -712,7 +680,7 @@ class FactoryOrchestrator:
             await self._queue_pending_job(job, [candidate], robot_key)
             return
 
-        operation_inputs = self._build_operation_inputs(selected_route)
+        operation_inputs = build_operation_inputs(selected_route)
         input_arguments = [
             {
                 "value": {
@@ -840,7 +808,7 @@ class FactoryOrchestrator:
                 f"{self.config.basyx_base_url}/submodels/"
                 f"{robot.state_submodel_b64}"
             )
-            fault_active = await self._read_robot_bool_state(
+            fault_active = await read_robot_bool_state(
                 client, state_url, "FaultActive"
             )
             await self._publish_robot_fault_state(robot, fault_active)
@@ -850,7 +818,7 @@ class FactoryOrchestrator:
                     f"FaultActive is {fault_active!r}, expected False"
                 )
                 continue
-            moving = await self._read_robot_bool_state(client, state_url, "IsMoving")
+            moving = await read_robot_bool_state(client, state_url, "IsMoving")
             if moving is None:
                 print(
                     f"[ORCHESTRATOR] Rejected robot {robot_id}: "
@@ -937,7 +905,7 @@ class FactoryOrchestrator:
         )
 
         if response.status_code < 400:
-            await self._try_finalize_lifecycle(lifecycle)
+            await self.lifecycle.try_finalize(lifecycle)
         else:
             await self._release_dispatch_job(
                 dispatch_job,
