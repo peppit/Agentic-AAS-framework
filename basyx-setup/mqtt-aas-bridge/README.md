@@ -1,80 +1,62 @@
-# Plug-and-play MQTT-to-AAS gateway
+# Semantic MQTT-to-AAS telemetry bridge
 
-This service is the default telemetry data plane. The legacy BaSyx DataBridge is
-kept behind the `legacy-databridge` Compose profile for comparison.
+This service is the default telemetry data plane. It has no station or asset
+binding file. It discovers AAS ownership, Submodel endpoints, Property paths,
+and value types from the AAS and Submodel Registries.
 
-## Discovery
+## Telemetry contract
 
-A station announces itself with a retained message:
-
-```text
-factory/{stationId}/manifest
-```
-
-The manifest declares its telemetry signals, value types, target AAS submodels,
-and target element `idShort` values. The gateway validates the manifest, creates
-a bounded FIFO queue for that station, and starts processing immediately. No
-gateway restart or copied JSONata route is required.
-
-The top-level `stations.json` is the canonical bootstrap registry. Its
-`stations`, `robots`, `conveyors`, and `stationAssets` sections keep asset
-identity separate from station topology. Version-1 combined station entries
-remain accepted during migration.
-
-## Telemetry
-
-The preferred asset-scoped topic contracts are:
-
-```text
-factory/robots/{robotId}/telemetry/{signal}
-factory/conveyors/{conveyorId}/telemetry/{signal}
-```
-
-Payload:
+Publish QoS 1 messages to `oip/telemetry`:
 
 ```json
 {
+  "assetId": "urn:agent-aas:asset-instance:conveyor01",
+  "semanticId": "urn:agent-aas:semantics:WorkpiecePresent:1",
   "value": true,
-  "eventId": "station_01-boxDetected-42",
-  "timestamp": "2026-07-23T12:00:00Z"
+  "eventId": "conveyor01-workpiece-42",
+  "timestamp": "2026-08-28T12:00:00Z"
 }
 ```
 
-For migration, the gateway also accepts the simulator's existing topics:
+`assetId` is the AAS descriptor's `globalAssetId`. `semanticId` identifies a
+Property belonging to that asset. The bridge looks up the exact Registry-
+advertised Submodel endpoint and recursively discovered `idShort` path, coerces
+the value to the Property's AAS `valueType`, and patches its `$value` endpoint.
 
-```text
-simulation/{stationId}/{signal}
-```
+The contract intentionally contains no station name, simulator node name,
+Submodel ID, Property `idShort`, or signal alias. Changing `Sensor_BoxPresent`
+to `RenamedSensor`, for example, requires no bridge change while its semantic ID
+remains stable.
 
-For example, `factory/robots/Robot_01/telemetry/faultActive` updates the
-`FaultActive` element in the Robot State submodel registered for `Robot_01`.
-Likewise, `factory/conveyors/Conveyor_01/telemetry/boxDetected` targets that
-conveyor independently of other conveyors at the same station.
+## Dynamic discovery
 
-Messages are validated against their asset binding. Assets are processed
-concurrently, while each asset's FIFO queue preserves local ordering. Optional
-`eventId` or `sequence` values provide QoS-1 duplicate suppression.
+The route catalog is rebuilt every `REGISTRY_REFRESH_SECONDS` and atomically
+replaced. A newly registered asset becomes routable without a bridge restart;
+an unregistered asset disappears on the next refresh. A route miss also causes
+an immediate refresh to close the onboarding race.
 
-## Reliability
+Only instance AASs and `Property` elements are routable. If one asset declares
+the same semantic ID on multiple Properties, that ambiguous route is rejected
+and reported instead of guessing.
 
-- Bounded station queues provide backpressure.
-- AAS writes use exponential retry.
-- Invalid or permanently failed messages are published to
-  `oip/fault/telemetry-bridge/{stationId}`.
-- Retained manifests allow the gateway to reconstruct discovery state after a
-  restart.
+Assets are processed concurrently, while each asset has a bounded FIFO queue.
+Optional `eventId` or `sequence` fields provide QoS-1 duplicate suppression.
+AAS writes use exponential retry. Rejected or permanently failed messages are
+published to `oip/fault/telemetry-bridge` with their canonical identities.
 
-Start the gateway as part of the execution profile:
+Key environment variables:
+
+- `AAS_REGISTRY_URL`, `SUBMODEL_REGISTRY_URL`, `REGISTRY_REFRESH_SECONDS`
+- `MQTT_HOST`, `MQTT_PORT`, `MQTT_TELEMETRY_TOPIC`
+- `HTTP_TIMEOUT_SECONDS`, `AAS_UPDATE_RETRY_COUNT`
+- `ASSET_QUEUE_SIZE`, `EVENT_DEDUP_WINDOW`, `FAULT_TOPIC`
+
+Start the gateway:
 
 ```powershell
 docker compose up -d --build mqtt-aas-bridge
 ```
 
-Run the legacy DataBridge only for comparison:
-
-```powershell
-docker compose --profile legacy-databridge up -d databridge
-```
-
-Do not run both writers simultaneously because they update the same AAS
-properties.
+The legacy BaSyx DataBridge remains available only through the
+`legacy-databridge` profile for comparison. Do not run both writers because
+they update the same AAS Properties.

@@ -5,6 +5,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.openindustryproject.opcua.service.MqttCommandPublisherService;
+import com.openindustryproject.opcua.service.SimulationIdentityTranslator;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -28,11 +30,25 @@ import java.util.UUID;
 public class SimulationMachineOperationController {
 
     private static final Logger logger = LoggerFactory.getLogger(SimulationMachineOperationController.class);
+    private static final String SOURCE_TRANSFER_LOCATION =
+            "urn:agent-aas:semantics:SourceTransferLocation:1";
+    private static final String TARGET_TRANSFER_LOCATION =
+            "urn:agent-aas:semantics:TargetTransferLocation:1";
 
     private final MqttCommandPublisherService mqttPublisher;
+    private final SimulationIdentityTranslator identityTranslator;
 
-    public SimulationMachineOperationController(MqttCommandPublisherService mqttPublisher) {
+    @Autowired
+    public SimulationMachineOperationController(
+            MqttCommandPublisherService mqttPublisher,
+            SimulationIdentityTranslator identityTranslator) {
         this.mqttPublisher = mqttPublisher;
+        this.identityTranslator = identityTranslator;
+    }
+
+    // Kept for direct compatibility use and focused unit tests.
+    public SimulationMachineOperationController(MqttCommandPublisherService mqttPublisher) {
+        this(mqttPublisher, new SimulationIdentityTranslator());
     }
 
         @PostMapping(
@@ -143,24 +159,37 @@ public class SimulationMachineOperationController {
             JsonObject root = parseInputRoot(input);
             String requestId = extractRequestId(root, input);
             String runId = extractStringParameter(root, "runId", "");
-            String stationId = extractMoveBoxStationId(root);
             JsonObject extractedParams = extractParams(root);
-            String sourcePosition = extractStringParameterAny(root, null, "SourcePosition");
-            if (sourcePosition == null || sourcePosition.isBlank()) {
-                sourcePosition = extractStringFromParams(extractedParams, "SourcePosition");
+            String sourceIdentity = extractStringParameterBySemanticId(
+                    root, SOURCE_TRANSFER_LOCATION);
+            if (sourceIdentity == null || sourceIdentity.isBlank()) {
+                sourceIdentity = extractStringParameterAny(root, null, "SourcePosition");
+            }
+            if (sourceIdentity == null || sourceIdentity.isBlank()) {
+                sourceIdentity = extractStringFromParams(extractedParams, "SourcePosition");
             }
 
-            String targetPosition = extractStringParameterAny(root, null, "TargetPosition");
-            if (targetPosition == null || targetPosition.isBlank()) {
-                targetPosition = extractStringFromParams(extractedParams, "TargetPosition");
+            String targetIdentity = extractStringParameterBySemanticId(
+                    root, TARGET_TRANSFER_LOCATION);
+            if (targetIdentity == null || targetIdentity.isBlank()) {
+                targetIdentity = extractStringParameterAny(root, null, "TargetPosition");
+            }
+            if (targetIdentity == null || targetIdentity.isBlank()) {
+                targetIdentity = extractStringFromParams(extractedParams, "TargetPosition");
             }
 
-            if (sourcePosition == null || sourcePosition.isBlank()) {
-                throw new IllegalArgumentException("Missing required parameter: SourcePosition");
+            if (sourceIdentity == null || sourceIdentity.isBlank()) {
+                throw new IllegalArgumentException(
+                        "Missing semantic SourceTransferLocation parameter");
             }
-            if (targetPosition == null || targetPosition.isBlank()) {
-                throw new IllegalArgumentException("Missing required parameter: TargetPosition");
+            if (targetIdentity == null || targetIdentity.isBlank()) {
+                throw new IllegalArgumentException(
+                        "Missing semantic TargetTransferLocation parameter");
             }
+
+            String stationId = extractMoveBoxStationId(root, sourceIdentity);
+            String sourcePosition = identityTranslator.toLocalName(sourceIdentity);
+            String targetPosition = identityTranslator.toLocalName(targetIdentity);
 
             JsonObject params = new JsonObject();
             params.addProperty("SourcePosition", sourcePosition);
@@ -311,7 +340,52 @@ public class SimulationMachineOperationController {
         return null;
     }
 
-    private String extractMoveBoxStationId(JsonObject root) {
+    private String extractStringParameterBySemanticId(
+            JsonObject root, String expectedSemanticId) {
+        JsonArray variables = findArgumentArray(root);
+        if (variables == null) {
+            return null;
+        }
+        for (JsonElement variable : variables) {
+            if (!variable.isJsonObject()) {
+                continue;
+            }
+            JsonObject wrapper = variable.getAsJsonObject();
+            if (!wrapper.has("value") || !wrapper.get("value").isJsonObject()) {
+                continue;
+            }
+            JsonObject value = wrapper.getAsJsonObject("value");
+            if (hasSemanticId(value, expectedSemanticId)
+                    && value.has("value")
+                    && value.get("value").isJsonPrimitive()) {
+                return value.get("value").getAsString();
+            }
+        }
+        return null;
+    }
+
+    private boolean hasSemanticId(JsonObject element, String expectedSemanticId) {
+        if (!element.has("semanticId") || !element.get("semanticId").isJsonObject()) {
+            return false;
+        }
+        JsonObject semanticId = element.getAsJsonObject("semanticId");
+        if (!semanticId.has("keys") || !semanticId.get("keys").isJsonArray()) {
+            return false;
+        }
+        for (JsonElement keyElement : semanticId.getAsJsonArray("keys")) {
+            if (!keyElement.isJsonObject()) {
+                continue;
+            }
+            JsonObject key = keyElement.getAsJsonObject();
+            if (key.has("value")
+                    && expectedSemanticId.equals(key.get("value").getAsString())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String extractMoveBoxStationId(JsonObject root, String sourceIdentity) {
         String stationId = extractStringParameterAny(root, null, "StationId");
         if (stationId == null || stationId.isBlank()) {
             stationId = extractStringFromParams(extractParams(root), "StationId");
@@ -319,7 +393,12 @@ public class SimulationMachineOperationController {
         if (stationId != null && !stationId.isBlank()) {
             return stationId;
         }
-        throw new IllegalArgumentException("Missing required parameter: StationId");
+        stationId = identityTranslator.stationForSource(sourceIdentity);
+        if (stationId != null) {
+            return stationId;
+        }
+        throw new IllegalArgumentException(
+                "No OIP station mapping configured for source " + sourceIdentity);
     }
 
     private String extractRequiredStationId(JsonObject root, String stationIdFromPath) {

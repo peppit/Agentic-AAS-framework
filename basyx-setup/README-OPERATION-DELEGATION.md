@@ -95,16 +95,20 @@ Key points:
 1. Qualifier type must be exactly invocationDelegation.
 2. URL must be reachable from aas-env container.
 3. AAS operation inputs are forwarded and parsed by the delegated service.
-4. MoveBox expects `StationId`, `SourcePosition`, and `TargetPosition`.
-5. `StationId` from the operation input is authoritative.
+4. MoveBox identifies source and target inputs through
+   `SourceTransferLocation` and `TargetTransferLocation` semantic IDs.
+5. Canonical identities are translated to OIP-local node/station names only in
+   the delegation service's `simulation.identity` configuration. Explicit
+   legacy `StationId`, `SourcePosition`, and `TargetPosition` inputs remain
+   accepted for compatibility.
 
 ## Robot MoveBox Payload Contract
 
-For MoveBox operation delegation, define these AAS input variables:
+For MoveBox operation delegation, define source and target AAS input variables
+with these semantics (their `idShort` values are arbitrary):
 
-1. StationId (xs:string)
-2. SourcePosition (xs:string)
-3. TargetPosition (xs:string)
+1. `urn:agent-aas:semantics:SourceTransferLocation:1`
+2. `urn:agent-aas:semantics:TargetTransferLocation:1`
 
 The delegated service publishes this MQTT message shape:
 

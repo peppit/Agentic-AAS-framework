@@ -207,6 +207,19 @@ class SemanticOrchestratorTests(unittest.IsolatedAsyncioTestCase):
                 "ChangedTargetName": "urn:test:pallet",
             },
         )
+        semantics_by_id_short = {
+            item["value"]["idShort"]: item["value"]["semanticId"]["keys"][0][
+                "value"
+            ]
+            for item in payload["inputArguments"]
+        }
+        self.assertEqual(
+            semantics_by_id_short,
+            {
+                "ChangedSourceName": SOURCE_TRANSFER_LOCATION,
+                "ChangedTargetName": TARGET_TRANSFER_LOCATION,
+            },
+        )
         self.assertTrue(operation_invoke_url(binding).endswith("/ArbitraryOperation/invoke"))
 
     def test_g_comanaged_and_external_target_ids_are_equal(self):

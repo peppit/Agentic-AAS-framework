@@ -9,8 +9,8 @@ RUN mvn dependency:go-offline
 # Copy source code
 COPY src src
 
-# Build the project
-RUN mvn clean package -DskipTests
+# Compile and verify the adapter before producing the runtime image.
+RUN mvn clean package
 
 # Stage 2: Runtime Stage
 FROM eclipse-temurin:17-jre

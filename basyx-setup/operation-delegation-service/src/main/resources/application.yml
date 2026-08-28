@@ -11,6 +11,12 @@ logging:
     com.openindustryproject: DEBUG
 
 simulation:
+  identity:
+    aliases:
+      "urn:agent-aas:asset-instance:conveyor01": Conveyor_01
+      "urn:agent-aas:entity:oip-factory01:pallet01": Pallet_01
+    source-stations:
+      "urn:agent-aas:asset-instance:conveyor01": Station_01
   mqtt:
     enabled: true
     broker-url: tcp://mosquitto:1883

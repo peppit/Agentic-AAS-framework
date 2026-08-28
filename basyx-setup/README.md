@@ -168,13 +168,11 @@ Current behavior:
    snapshot atomically, so newly registered compatible resources require no
    python-agent restart or configuration entry.
 
-The simulation publishes robot fault telemetry on
-`factory/robots/<robotId>/telemetry/faultActive`. The robot ID is resolved
-through `stations.json`, allowing fault telemetry to target a specific Robot
-State AAS independently of its station.
-
-Conveyor telemetry is similarly asset-scoped under
-`factory/conveyors/<conveyorId>/telemetry/<signal>`.
+The simulation telemetry boundary uses canonical AAS identities. OIP publishes
+events to `oip/telemetry` with `assetId`, `semanticId`, and `value`; the
+MQTT-to-AAS bridge discovers the owning Property and its Registry-advertised
+Submodel endpoint. Neither the bridge nor the python-agent interprets station,
+asset, signal, Submodel, or Property names.
 
 Key python-agent environment variables (see [docker-compose.yml](docker-compose.yml)):
 
@@ -186,13 +184,15 @@ Key python-agent environment variables (see [docker-compose.yml](docker-compose.
    `INVOKE_RETRY_COUNT`
 4. `ORCHESTRATOR_LOG_CSV_PATH` / `MEASUREMENT_RUN_ID`
 
-The python-agent has no `BASYX_BASE_URL` or `STATION_REGISTRY_FILE`: all AAS
-repository endpoints come from Registry descriptors.
+The python-agent and MQTT-to-AAS bridge have no `BASYX_BASE_URL` or
+`STATION_REGISTRY_FILE`: all AAS repository endpoints come from Registry
+descriptors.
 
 ## Asset Registry
 
-[stations.json](stations.json) is a legacy integration registry used by the
-telemetry bridge and optional MQTT operation bridge. Schema version 2
+[stations.json](stations.json) is a legacy integration registry used only by
+the optional `mqtt-first` MQTT operation compatibility bridge. It is not part
+of the default semantic telemetry or orchestration paths. Schema version 2
 separates `stations`, `robots`, and `conveyors`. The `stationAssets` list links
 robots and conveyors to their physical stations using only `stationId`,
 `assetType`, and `assetId`. Robot-to-station operation eligibility is separate:
@@ -208,8 +208,9 @@ To add assets:
 5. Model Offered capabilities, CapabilityRealizedBy, CanReach, and
    SkillInvokedByOperation in each resource AAS.
 6. Add or upload the corresponding AASX packages and map the assets in OIP.
-7. Restart legacy bridges only when their adapter mappings change. The
-   python-agent discovers compatible AAS resources on its next refresh.
+7. Restart the optional legacy operation bridge only when its adapter mappings
+   change. The semantic telemetry bridge and python-agent discover compatible
+   AAS resources on their next refresh.
 
 `server.py` currently represents one simulated robot and conveyor controller
 per station. The separated registry and telemetry paths support independently
@@ -231,17 +232,18 @@ station requires a corresponding OIP scene/controller model.
    selected without editing `stations.json`, changing Python, adding an agent,
    or restarting python-agent.
 
-Phase 2 semantic scheduling is station-independent. Raw OIP telemetry-to-AAS
-translation still uses `stations.json` in `mqtt-aas-bridge`; that adapter-only
-legacy is reserved for Phase 3.
+Phase 3 semantic telemetry is station-independent. The bridge routes
+`(globalAssetId, semanticId)` directly to a discovered AAS Property, including
+heterogeneous and nested `idShort` paths. Registration and removal are applied
+without a bridge restart.
 
-The current Java operation-delegation/device adapter also retains its legacy
-MoveBox input contract (`SourcePosition` and `TargetPosition`) and may require
-translation from canonical AAS identities to local simulation node names.
-Python does not perform that translation: it maps canonical source/target IDs
-to the actual semantically declared Operation variables and calls BaSyx
-`/invoke`. Any local-name compatibility therefore remains below the AAS
-Operation boundary.
+The Java operation-delegation/device adapter translates canonical source and
+target identities to OIP node and station names through its
+`simulation.identity` configuration. Python does not perform that translation:
+it maps canonical values to the actual semantically declared Operation
+variables and includes their semantic references in the BaSyx `/invoke`
+payload. Local-name compatibility therefore stays below the AAS Operation
+boundary.
 
 ## Include Your Own Asset Administration Shells
 

@@ -1,369 +1,364 @@
+"""Semantic MQTT-to-AAS telemetry bridge.
+
+Telemetry contains canonical AAS identities. Registry descriptors and the
+semantic IDs in Submodels are the only routing configuration; local asset,
+station, Submodel, and Property names are deliberately not interpreted here.
+"""
+
 import asyncio
+import base64
 import json
 import os
 from collections import deque
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from aiomqtt import Client as MqttClient
 from aiomqtt import MqttError
 
 
-DEFAULT_SIGNALS = {
-    "isRunning": ("IsRunning", "bool"),
-    "currentSpeed": ("CurrentSpeed", "float"),
-    "boxDetected": ("Sensor_BoxPresent", "bool"),
-    "isMoving": ("IsMoving", "bool"),
-    "faultActive": ("FaultActive", "bool"),
-}
+@dataclass(frozen=True)
+class SignalBinding:
+    asset_id: str
+    semantic_id: str
+    submodel_endpoint: str
+    element_path: str
+    value_type: str
 
 
 @dataclass(frozen=True)
-class SignalBinding:
-    submodel_id: str
-    element: str
-    value_type: str
+class TelemetryEvent:
+    asset_id: str
+    semantic_id: str
+    value: Any
+    event_id: str | None = None
 
 
 @dataclass(frozen=True)
 class Config:
     mqtt_host: str = os.getenv("MQTT_HOST", "mosquitto")
     mqtt_port: int = int(os.getenv("MQTT_PORT", "1883"))
-    legacy_telemetry_topic: str = os.getenv("MQTT_TELEMETRY_TOPIC", "simulation/+/+")
-    telemetry_topic: str = os.getenv("MQTT_DYNAMIC_TELEMETRY_TOPIC", "factory/+/telemetry/+")
-    robot_telemetry_topic: str = os.getenv("MQTT_ROBOT_TELEMETRY_TOPIC", "factory/robots/+/telemetry/+")
-    conveyor_telemetry_topic: str = os.getenv("MQTT_CONVEYOR_TELEMETRY_TOPIC", "factory/conveyors/+/telemetry/+")
-    manifest_topic: str = os.getenv("MQTT_MANIFEST_TOPIC", "factory/+/manifest")
-    aas_base_url: str = os.getenv("BASYX_BASE_URL", "http://aas-env:8081")
-    bindings_file: str = os.getenv("STATION_REGISTRY_FILE", "/config/stations.json")
+    telemetry_topic: str = os.getenv("MQTT_TELEMETRY_TOPIC", "oip/telemetry")
+    aas_registry_url: str = os.getenv(
+        "AAS_REGISTRY_URL", "http://aas-registry:8080"
+    )
+    submodel_registry_url: str = os.getenv(
+        "SUBMODEL_REGISTRY_URL", "http://sm-registry:8080"
+    )
+    registry_refresh_seconds: float = float(
+        os.getenv("REGISTRY_REFRESH_SECONDS", "5")
+    )
     update_retry_count: int = int(os.getenv("AAS_UPDATE_RETRY_COUNT", "5"))
     retry_base_seconds: float = float(os.getenv("AAS_RETRY_BASE_SECONDS", "0.2"))
     http_timeout_seconds: float = float(os.getenv("HTTP_TIMEOUT_SECONDS", "8"))
     mqtt_reconnect_seconds: float = float(os.getenv("MQTT_RECONNECT_SECONDS", "2"))
-    fault_topic_prefix: str = os.getenv("FAULT_TOPIC_PREFIX", "oip/fault/telemetry-bridge")
-    queue_size: int = int(os.getenv("STATION_QUEUE_SIZE", "1000"))
+    fault_topic: str = os.getenv("FAULT_TOPIC", "oip/fault/telemetry-bridge")
+    queue_size: int = int(os.getenv("ASSET_QUEUE_SIZE", "1000"))
     dedup_window: int = int(os.getenv("EVENT_DEDUP_WINDOW", "4096"))
 
 
-def normalize_station_id(value: str) -> str:
-    return value.strip().lower()
+class RegistryError(RuntimeError):
+    """Raised when semantic routing cannot be discovered from the Registries."""
 
 
-def _load_registry(path: str) -> dict:
-    binding_path = Path(path)
-    if not binding_path.exists():
-        print(f"[DISCOVERY] No seed bindings at {binding_path}; waiting for retained manifests")
-        return {}
-    raw = json.loads(binding_path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        raise ValueError("Asset registry must be a JSON object")
-    return raw
+def encode_identifier(identifier: str) -> str:
+    return base64.urlsafe_b64encode(identifier.encode()).decode().rstrip("=")
 
 
-def _asset_signal_bindings(
-    asset: dict,
-    allowed_signals: set[str],
-    legacy_submodel_key: str = "",
-    legacy_properties_key: str = "",
-) -> dict[str, SignalBinding]:
-    state_submodel_id = str(
-        asset.get("stateSubmodelB64")
-        or (asset.get(legacy_submodel_key) if legacy_submodel_key else "")
-        or ""
-    ).strip()
-    if not state_submodel_id:
-        return {}
-    property_configs = asset.get("properties")
-    if not isinstance(property_configs, dict) and legacy_properties_key:
-        property_configs = asset.get(legacy_properties_key)
-    signals: dict[str, SignalBinding] = {}
-    for signal in allowed_signals:
-        default_element, default_type = DEFAULT_SIGNALS[signal]
-        property_config = (
-            property_configs.get(signal, {})
-            if isinstance(property_configs, dict)
-            else {}
-        )
-        element = default_element
-        value_type = default_type
-        if isinstance(property_config, dict):
-            element = str(property_config.get("idShort", element)).strip()
-            value_type = str(property_config.get("type", value_type)).strip().lower()
-        signals[signal] = SignalBinding(state_submodel_id, element, value_type)
-    return signals
-
-
-def load_conveyor_bindings(path: str, registry: dict | None = None) -> dict[str, dict[str, SignalBinding]]:
-    raw = _load_registry(path) if registry is None else registry
-    conveyors: dict[str, dict[str, SignalBinding]] = {}
-    conveyor_entries = raw.get("conveyors")
-    if isinstance(conveyor_entries, dict):
-        for conveyor_key, entry in conveyor_entries.items():
-            if not isinstance(entry, dict):
-                continue
-            conveyor_id = normalize_station_id(
-                str(entry.get("conveyorId", conveyor_key))
-            )
-            signals = _asset_signal_bindings(
-                entry, {"isRunning", "currentSpeed", "boxDetected"}
-            )
-            if conveyor_id and signals:
-                conveyors[conveyor_id] = signals
-        return conveyors
-
-    station_entries = raw.get("stations")
-    if not isinstance(station_entries, dict):
-        return conveyors
-    for station_key, entry in station_entries.items():
-        if not isinstance(entry, dict):
+def descriptor_endpoint(descriptor: object) -> str:
+    if not isinstance(descriptor, dict):
+        return ""
+    endpoints = descriptor.get("endpoints", [])
+    if not isinstance(endpoints, list):
+        return ""
+    fallback = ""
+    for endpoint in endpoints:
+        if not isinstance(endpoint, dict):
             continue
-        station_id = str(entry.get("stationId", station_key)).strip()
-        conveyor_id = normalize_station_id(
-            str(
-                entry.get("conveyorId")
-                or station_id.replace("Station_", "Conveyor_", 1)
-            )
+        protocol = endpoint.get("protocolInformation") or endpoint.get(
+            "protocol_information"
         )
-        signals = _asset_signal_bindings(
-            entry,
-            {"isRunning", "currentSpeed", "boxDetected"},
-            "conveyorSubmodelB64",
-            "conveyorProperties",
-        )
-        if conveyor_id and signals:
-            conveyors[conveyor_id] = signals
-    return conveyors
-
-
-def load_seed_bindings(path: str, registry: dict | None = None) -> dict[str, dict[str, SignalBinding]]:
-    raw = _load_registry(path) if registry is None else registry
-    if not raw:
-        return {}
-
-    station_entries = raw.get("stations")
-    if not isinstance(station_entries, dict):
-        raise ValueError("Station registry must contain a 'stations' object")
-
-    if isinstance(raw.get("conveyors"), dict):
-        conveyors = load_conveyor_bindings(path, raw)
-        stations = {
-            normalize_station_id(str(entry.get("stationId", key))): {}
-            for key, entry in station_entries.items()
-            if isinstance(entry, dict)
-        }
-        for relation in raw.get("stationAssets", []):
-            if (
-                not isinstance(relation, dict)
-                or str(relation.get("assetType", "")).strip().lower()
-                != "conveyor"
-            ):
-                continue
-            station_id = normalize_station_id(str(relation.get("stationId", "")))
-            conveyor_id = normalize_station_id(str(relation.get("assetId", "")))
-            if station_id in stations and conveyor_id in conveyors:
-                # Legacy station-scoped telemetry is unambiguous only while
-                # signal names do not overlap. Asset-scoped topics remain exact.
-                for signal, binding in conveyors[conveyor_id].items():
-                    stations[station_id].setdefault(signal, binding)
-        return {station: signals for station, signals in stations.items() if signals}
-
-    stations: dict[str, dict[str, SignalBinding]] = {}
-    for station_key, binding in station_entries.items():
-        if not isinstance(binding, dict):
-            raise ValueError(f"Binding for {station_key!r} must be an object")
-        station_id = str(binding.get("stationId", station_key)).strip()
-        if not station_id:
-            raise ValueError(f"Binding for {station_key!r} has no stationId")
-        signals = _asset_signal_bindings(
-            binding,
-            {"isRunning", "currentSpeed", "boxDetected"},
-            "conveyorSubmodelB64",
-            "conveyorProperties",
-        )
-        signals.update(
-            _asset_signal_bindings(
-                binding,
-                {"isMoving", "faultActive"},
-                "robotStateSubmodelB64",
-                "robotProperties",
-            )
-        )
-        if signals:
-            stations[normalize_station_id(station_id)] = signals
-    return stations
-
-
-def load_robot_bindings(path: str, registry: dict | None = None) -> dict[str, dict[str, SignalBinding]]:
-    raw = _load_registry(path) if registry is None else registry
-    robot_entries = raw.get("robots") if isinstance(raw, dict) else None
-    if isinstance(robot_entries, dict):
-        robots: dict[str, dict[str, SignalBinding]] = {}
-        for robot_key, entry in robot_entries.items():
-            if not isinstance(entry, dict):
-                continue
-            robot_id = normalize_station_id(str(entry.get("robotId", robot_key)))
-            signals = _asset_signal_bindings(entry, {"isMoving", "faultActive"})
-            if robot_id and signals:
-                robots[robot_id] = signals
-        return robots
-
-    station_entries = raw.get("stations") if isinstance(raw, dict) else None
-    if not isinstance(station_entries, dict):
-        raise ValueError("Station registry must contain a 'stations' object")
-
-    robots: dict[str, dict[str, SignalBinding]] = {}
-    for entry in station_entries.values():
-        if not isinstance(entry, dict):
+        if not isinstance(protocol, dict):
             continue
-        station_id = str(entry.get("stationId", "")).strip()
-        robot_id = normalize_station_id(
-            str(
-                entry.get("robotId")
-                or station_id.replace("Station_", "Robot_", 1)
-            )
-        )
-        if not robot_id:
+        href = str(protocol.get("href") or "").strip()
+        if href:
+            fallback = fallback or href
+            if href.lower().startswith(("http://", "https://")):
+                return href
+    return fallback
+
+
+def _reference_values(reference: object) -> set[str]:
+    if not isinstance(reference, dict):
+        return set()
+    keys = reference.get("keys", [])
+    if not isinstance(keys, list):
+        return set()
+    return {
+        str(key.get("value") or "").strip()
+        for key in keys
+        if isinstance(key, dict) and str(key.get("value") or "").strip()
+    }
+
+
+def semantic_ids(element: object) -> set[str]:
+    if not isinstance(element, dict):
+        return set()
+    result = _reference_values(element.get("semanticId"))
+    supplemental = element.get("supplementalSemanticIds", [])
+    if isinstance(supplemental, dict):
+        supplemental = [supplemental]
+    if isinstance(supplemental, list):
+        for reference in supplemental:
+            result.update(_reference_values(reference))
+    return result
+
+
+def model_type(element: object) -> str:
+    if not isinstance(element, dict):
+        return ""
+    value = element.get("modelType")
+    if isinstance(value, dict):
+        value = value.get("name")
+    return str(value or "")
+
+
+def _child_elements(element: dict) -> Iterator[dict]:
+    if model_type(element).lower() == "operation":
+        for field in ("inputVariables", "outputVariables", "inoutputVariables"):
+            variables = element.get(field, [])
+            if isinstance(variables, list):
+                for variable in variables:
+                    value = variable.get("value") if isinstance(variable, dict) else None
+                    if isinstance(value, dict):
+                        yield value
+    for field in ("value", "statements", "annotations"):
+        children = element.get(field)
+        if isinstance(children, list):
+            yield from (child for child in children if isinstance(child, dict))
+
+
+def walk_elements(elements: object, prefix: str = "") -> Iterator[tuple[str, dict]]:
+    if not isinstance(elements, list):
+        return
+    for index, element in enumerate(elements):
+        if not isinstance(element, dict):
             continue
-
-        signals = _asset_signal_bindings(
-            entry,
-            {"isMoving", "faultActive"},
-            "robotStateSubmodelB64",
-            "robotProperties",
-        )
-        if signals:
-            robots[robot_id] = signals
-    return robots
+        id_short = str(element.get("idShort") or "").strip()
+        segment = id_short or f"@{model_type(element) or 'Element'}[{index}]"
+        path = f"{prefix}.{segment}" if prefix else segment
+        yield path, element
+        yield from walk_elements(list(_child_elements(element)), path)
 
 
-def parse_manifest(topic: str, payload: bytes) -> tuple[str, dict[str, SignalBinding]]:
-    parts = topic.split("/")
-    if len(parts) != 3 or parts[0] != "factory" or parts[2] != "manifest":
-        raise ValueError(f"Unsupported manifest topic {topic!r}")
-
+def parse_telemetry(payload: bytes) -> TelemetryEvent:
     decoded = json.loads(payload.decode("utf-8"))
     if not isinstance(decoded, dict):
-        raise ValueError("Station manifest must be a JSON object")
-
-    topic_station = normalize_station_id(parts[1])
-    station = normalize_station_id(str(decoded.get("stationId", topic_station)))
-    if station != topic_station:
-        raise ValueError(f"Manifest stationId {station!r} does not match topic {topic_station!r}")
-
-    assets = decoded.get("assets")
-    if not isinstance(assets, dict):
-        raise ValueError("Station manifest must contain an assets object")
-
-    signals: dict[str, SignalBinding] = {}
-    for asset in assets.values():
-        if not isinstance(asset, dict):
-            continue
-        submodel_id = str(asset.get("submodelId", "")).strip()
-        properties = asset.get("properties")
-        if not submodel_id or not isinstance(properties, dict):
-            continue
-        for signal, property_config in properties.items():
-            if isinstance(property_config, str):
-                element = property_config
-                value_type = DEFAULT_SIGNALS.get(signal, ("", "string"))[1]
-            elif isinstance(property_config, dict):
-                element = str(property_config.get("idShort", "")).strip()
-                value_type = str(property_config.get("type", "string")).strip().lower()
-            else:
-                continue
-            if element and value_type in {"bool", "boolean", "float", "double", "int", "integer", "string"}:
-                signals[signal] = SignalBinding(submodel_id, element, value_type)
-
-    if not signals:
-        raise ValueError("Station manifest does not define any telemetry properties")
-    return station, signals
-
-
-def parse_telemetry(topic: str, payload: bytes) -> tuple[str, str, str, Any, str | None]:
-    parts = topic.split("/")
-    if len(parts) == 4 and parts[0] == "factory" and parts[2] == "telemetry":
-        target_type, target_id, signal = "station", normalize_station_id(parts[1]), parts[3]
-    elif len(parts) == 3 and parts[0] == "simulation":
-        target_type, target_id, signal = "station", normalize_station_id(parts[1]), parts[2]
-    elif (
-        len(parts) == 5
-        and parts[0] == "factory"
-        and parts[1] in {"robots", "conveyors"}
-        and parts[3] == "telemetry"
-    ):
-        target_type = "robot" if parts[1] == "robots" else "conveyor"
-        target_id, signal = normalize_station_id(parts[2]), parts[4]
-    else:
-        raise ValueError(f"Unsupported telemetry topic {topic!r}")
-
-    decoded = json.loads(payload.decode("utf-8"))
-    if isinstance(decoded, dict):
-        payload_robot_id = decoded.get("robotId")
-        payload_conveyor_id = decoded.get("conveyorId")
-        if (
-            target_type == "robot"
-            and payload_robot_id is not None
-            and normalize_station_id(str(payload_robot_id)) != target_id
-        ):
-            raise ValueError(
-                f"Payload robotId {payload_robot_id!r} does not match topic robot {target_id!r}"
-            )
-        if (
-            target_type == "conveyor"
-            and payload_conveyor_id is not None
-            and normalize_station_id(str(payload_conveyor_id)) != target_id
-        ):
-            raise ValueError(
-                f"Payload conveyorId {payload_conveyor_id!r} does not match "
-                f"topic conveyor {target_id!r}"
-            )
-        value = decoded.get("value", decoded.get(signal))
-        event_id_raw = decoded.get("eventId", decoded.get("sequence"))
-        event_id = str(event_id_raw) if event_id_raw is not None else None
-    else:
-        value, event_id = decoded, None
-    return target_type, target_id, signal, value, event_id
+        raise ValueError("Telemetry payload must be a JSON object")
+    asset_id = str(decoded.get("assetId") or "").strip()
+    semantic_id = str(decoded.get("semanticId") or "").strip()
+    if not asset_id:
+        raise ValueError("Telemetry payload has no assetId")
+    if not semantic_id:
+        raise ValueError("Telemetry payload has no semanticId")
+    if "value" not in decoded:
+        raise ValueError("Telemetry payload has no value")
+    event_id_raw = decoded.get("eventId", decoded.get("sequence"))
+    event_id = str(event_id_raw) if event_id_raw is not None else None
+    return TelemetryEvent(asset_id, semantic_id, decoded["value"], event_id)
 
 
 def coerce_value(value: Any, value_type: str) -> Any:
-    normalized = value_type.lower()
+    normalized = value_type.strip().lower()
+    for prefix in ("xs:", "xsd:"):
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix):]
     if normalized in {"bool", "boolean"}:
         if isinstance(value, bool):
             return value
         if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
             return value.strip().lower() == "true"
         raise ValueError("value must be boolean")
-    if normalized in {"float", "double"}:
+    if normalized in {"float", "double", "decimal"}:
         if isinstance(value, bool):
             raise ValueError("value must be numeric")
         return float(value)
-    if normalized in {"int", "integer"}:
+    integers = {
+        "byte", "short", "int", "integer", "long", "unsignedbyte",
+        "unsignedshort", "unsignedint", "unsignedlong",
+    }
+    if normalized in integers:
         if isinstance(value, bool):
             raise ValueError("value must be an integer")
         return int(value)
-    if normalized == "string":
+    if normalized in {"string", "anyuri", "datetime", "date", "time"}:
         return str(value)
-    raise ValueError(f"Unsupported value type {value_type!r}")
+    raise ValueError(f"Unsupported AAS value type {value_type!r}")
+
+
+class SemanticRegistry:
+    """Build telemetry routes from AAS ownership and Property semantics."""
+
+    def __init__(self, config: Config, http: httpx.AsyncClient):
+        self.config = config
+        self.http = http
+
+    async def _get_json(self, url: str, *, params: dict | None = None) -> Any:
+        try:
+            response = await self.http.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise RegistryError(f"Registry request {url} failed: {exc}") from exc
+
+    async def _pages(self, url: str) -> AsyncIterator[list[dict]]:
+        params: dict[str, str] = {}
+        seen: set[str] = set()
+        while True:
+            payload = await self._get_json(url, params=params)
+            if isinstance(payload, list):
+                result, metadata = payload, {}
+            elif isinstance(payload, dict):
+                result = payload.get("result", [])
+                metadata = payload.get("pagingMetadata") or payload.get(
+                    "paging_metadata"
+                ) or {}
+            else:
+                raise RegistryError(f"Registry request {url} returned invalid JSON shape")
+            if not isinstance(result, list):
+                raise RegistryError(f"Registry request {url} has a non-list result")
+            yield [item for item in result if isinstance(item, dict)]
+            cursor = str(metadata.get("cursor") or "").strip()
+            if not cursor:
+                return
+            if cursor in seen:
+                raise RegistryError(f"Registry pagination repeated cursor {cursor!r}")
+            seen.add(cursor)
+            params["cursor"] = cursor
+
+    async def _all(self, url: str) -> list[dict]:
+        result: list[dict] = []
+        async for page in self._pages(url):
+            result.extend(page)
+        return result
+
+    async def _associated_submodels(self, descriptor: dict) -> list[dict]:
+        associated = descriptor.get("submodelDescriptors", [])
+        if isinstance(associated, list) and associated:
+            return [item for item in associated if isinstance(item, dict)]
+        aas_id = str(descriptor.get("id") or "").strip()
+        if not aas_id:
+            return []
+        url = (
+            f"{self.config.aas_registry_url.rstrip('/')}/shell-descriptors/"
+            f"{encode_identifier(aas_id)}/submodel-descriptors"
+        )
+        return await self._all(url)
+
+    async def discover(self) -> tuple[dict[tuple[str, str], SignalBinding], list[str]]:
+        aas_url = f"{self.config.aas_registry_url.rstrip('/')}/shell-descriptors"
+        sm_url = f"{self.config.submodel_registry_url.rstrip('/')}/submodel-descriptors"
+        aas_descriptors, standalone_descriptors = await asyncio.gather(
+            self._all(aas_url), self._all(sm_url)
+        )
+        standalone = {
+            str(item.get("id") or "").strip(): item
+            for item in standalone_descriptors
+            if str(item.get("id") or "").strip()
+        }
+        associated_results = await asyncio.gather(
+            *(self._associated_submodels(item) for item in aas_descriptors),
+            return_exceptions=True,
+        )
+        candidates: dict[tuple[str, str], list[SignalBinding]] = {}
+        diagnostics: list[str] = []
+
+        for aas_descriptor, result in zip(
+            aas_descriptors, associated_results, strict=True
+        ):
+            asset_id = str(aas_descriptor.get("globalAssetId") or "").strip()
+            aas_id = str(aas_descriptor.get("id") or "<unknown>").strip()
+            asset_kind = aas_descriptor.get("assetKind")
+            if isinstance(asset_kind, dict):
+                asset_kind = asset_kind.get("name") or asset_kind.get("value")
+            if str(asset_kind or "Instance").lower() == "type":
+                continue
+            if not asset_id:
+                diagnostics.append(f"AAS {aas_id} has no globalAssetId; skipped")
+                continue
+            if isinstance(result, Exception):
+                diagnostics.append(f"AAS {aas_id} Submodel discovery failed: {result}")
+                continue
+            descriptors = [
+                standalone.get(str(item.get("id") or "").strip(), item)
+                for item in result
+            ]
+            fetches = await asyncio.gather(
+                *(self._fetch_submodel(item) for item in descriptors),
+                return_exceptions=True,
+            )
+            for descriptor, fetched in zip(descriptors, fetches, strict=True):
+                submodel_id = str(descriptor.get("id") or "<unknown>")
+                endpoint = descriptor_endpoint(descriptor).rstrip("/")
+                if isinstance(fetched, Exception):
+                    diagnostics.append(
+                        f"Asset {asset_id} Submodel {submodel_id} fetch failed: {fetched}"
+                    )
+                    continue
+                for path, element in walk_elements(fetched.get("submodelElements", [])):
+                    if model_type(element).lower() != "property":
+                        continue
+                    value_type = str(element.get("valueType") or "xs:string").strip()
+                    for semantic_id in semantic_ids(element):
+                        binding = SignalBinding(
+                            asset_id, semantic_id, endpoint, path, value_type
+                        )
+                        candidates.setdefault((asset_id, semantic_id), []).append(binding)
+
+        bindings: dict[tuple[str, str], SignalBinding] = {}
+        for key, routes in candidates.items():
+            unique = list(dict.fromkeys(routes))
+            if len(unique) == 1:
+                bindings[key] = unique[0]
+            else:
+                diagnostics.append(
+                    f"Asset {key[0]} has {len(unique)} Properties with semanticId "
+                    f"{key[1]}; route is ambiguous and was excluded"
+                )
+        return bindings, diagnostics
+
+    async def _fetch_submodel(self, descriptor: dict) -> dict:
+        endpoint = descriptor_endpoint(descriptor)
+        if not endpoint:
+            raise RegistryError(
+                f"Submodel {descriptor.get('id', '<unknown>')} has no HTTP endpoint"
+            )
+        payload = await self._get_json(endpoint)
+        if not isinstance(payload, dict):
+            raise RegistryError(f"Submodel endpoint {endpoint} returned a non-object")
+        return payload
 
 
 class TelemetryBridge:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, *, http: httpx.AsyncClient | None = None):
         self.config = config
-        registry = _load_registry(config.bindings_file)
-        self.bindings = load_seed_bindings(config.bindings_file, registry)
-        self.robot_bindings = load_robot_bindings(config.bindings_file, registry)
-        self.conveyor_bindings = load_conveyor_bindings(config.bindings_file, registry)
-        self.http = httpx.AsyncClient(timeout=config.http_timeout_seconds)
+        self._owns_http = http is None
+        self.http = http or httpx.AsyncClient(timeout=config.http_timeout_seconds)
+        self.registry = SemanticRegistry(config, self.http)
+        self.bindings: dict[tuple[str, str], SignalBinding] = {}
         self.queues: dict[str, asyncio.Queue] = {}
         self.workers: dict[str, asyncio.Task] = {}
         self.seen_ids: dict[str, deque[str]] = {}
         self.seen_id_sets: dict[str, set[str]] = {}
+        self.refresh_lock = asyncio.Lock()
 
     async def close(self) -> None:
         await self.stop_workers()
-        await self.http.aclose()
+        if self._owns_http:
+            await self.http.aclose()
 
     async def stop_workers(self) -> None:
         for worker in self.workers.values():
@@ -374,133 +369,161 @@ class TelemetryBridge:
         self.seen_ids.clear()
         self.seen_id_sets.clear()
 
-    async def publish_fault(self, mqtt: MqttClient, station: str, message: str) -> None:
-        payload = json.dumps({"stationId": station, "error": message})
-        await mqtt.publish(f"{self.config.fault_topic_prefix}/{station}", payload, qos=1)
+    async def refresh_catalog(self) -> bool:
+        async with self.refresh_lock:
+            try:
+                discovered, diagnostics = await self.registry.discover()
+            except Exception as exc:
+                print(f"[DISCOVERY] Catalog refresh failed; keeping previous snapshot: {exc}")
+                return False
+            previous = set(self.bindings)
+            self.bindings = discovered
+            added = set(discovered) - previous
+            removed = previous - set(discovered)
+            print(
+                f"[DISCOVERY] Semantic telemetry catalog refreshed: "
+                f"routes={len(discovered)} added={len(added)} removed={len(removed)}"
+            )
+            for diagnostic in diagnostics:
+                print(f"[DISCOVERY] Warning: {diagnostic}")
+            return True
 
-    def ensure_station(self, station: str, mqtt: MqttClient) -> asyncio.Queue:
-        queue = self.queues.get(station)
+    async def catalog_refresher(self) -> None:
+        while True:
+            await asyncio.sleep(max(0.1, self.config.registry_refresh_seconds))
+            await self.refresh_catalog()
+
+    async def publish_fault(
+        self, mqtt: MqttClient, message: str, event: TelemetryEvent | None = None
+    ) -> None:
+        payload: dict[str, Any] = {"error": message}
+        if event is not None:
+            payload.update({"assetId": event.asset_id, "semanticId": event.semantic_id})
+            if event.event_id is not None:
+                payload["eventId"] = event.event_id
+        await mqtt.publish(self.config.fault_topic, json.dumps(payload), qos=1)
+
+    def ensure_asset(self, asset_id: str, mqtt: MqttClient) -> asyncio.Queue:
+        queue = self.queues.get(asset_id)
         if queue is None:
             queue = asyncio.Queue(maxsize=self.config.queue_size)
-            self.queues[station] = queue
-            self.seen_ids[station] = deque()
-            self.seen_id_sets[station] = set()
-            self.workers[station] = asyncio.create_task(self.station_worker(station, mqtt))
-            print(f"[DISCOVERY] Activated station {station!r}")
+            self.queues[asset_id] = queue
+            self.seen_ids[asset_id] = deque()
+            self.seen_id_sets[asset_id] = set()
+            self.workers[asset_id] = asyncio.create_task(self.asset_worker(asset_id, mqtt))
+            print(f"[TELEMETRY] Activated asset queue {asset_id!r}")
         return queue
 
-    def remember_event(self, station: str, event_id: str | None) -> bool:
+    def remember_event(self, asset_id: str, event_id: str | None) -> bool:
         if event_id is None:
             return True
-        seen = self.seen_id_sets[station]
+        seen = self.seen_id_sets[asset_id]
         if event_id in seen:
             return False
-        order = self.seen_ids[station]
+        order = self.seen_ids[asset_id]
         order.append(event_id)
         seen.add(event_id)
         while len(order) > self.config.dedup_window:
             seen.discard(order.popleft())
         return True
 
-    async def update_aas(
-        self,
-        target: str,
-        signal: str,
-        value: Any,
-        binding: SignalBinding,
-    ) -> None:
-        typed_value = coerce_value(value, binding.value_type)
-        url = (
-            f"{self.config.aas_base_url}/submodels/{binding.submodel_id}"
-            f"/submodel-elements/{binding.element}/$value"
-        )
+    async def update_aas(self, event: TelemetryEvent, binding: SignalBinding) -> None:
+        typed_value = coerce_value(event.value, binding.value_type)
+        path = quote(binding.element_path, safe=".")
+        url = f"{binding.submodel_endpoint}/submodel-elements/{path}/$value"
         attempts = max(1, self.config.update_retry_count)
         last_error: Exception | None = None
-
         for attempt in range(1, attempts + 1):
             try:
-                value_body = str(typed_value).lower() if isinstance(typed_value, bool) else str(typed_value)
+                value_body = (
+                    str(typed_value).lower()
+                    if isinstance(typed_value, bool)
+                    else str(typed_value)
+                )
                 response = await self.http.patch(url, json=value_body)
                 response.raise_for_status()
-                print(f"[TELEMETRY] {target} {signal}={typed_value} -> {binding.element}")
+                print(
+                    f"[TELEMETRY] assetId={event.asset_id} "
+                    f"semanticId={event.semantic_id} value={typed_value} "
+                    f"-> {binding.element_path}"
+                )
                 return
-            except (httpx.HTTPError, ValueError, KeyError) as exc:
+            except httpx.HTTPError as exc:
                 last_error = exc
-                print(f"[TELEMETRY] Update failed ({attempt}/{attempts}) for {target}/{signal}: {exc}")
+                print(
+                    f"[TELEMETRY] Update failed ({attempt}/{attempts}) for "
+                    f"{event.asset_id}/{event.semantic_id}: {exc}"
+                )
                 if attempt < attempts:
-                    await asyncio.sleep(self.config.retry_base_seconds * (2 ** (attempt - 1)))
+                    await asyncio.sleep(
+                        self.config.retry_base_seconds * (2 ** (attempt - 1))
+                    )
         raise RuntimeError(f"AAS update failed after {attempts} attempts: {last_error}")
 
-    async def station_worker(self, station: str, mqtt: MqttClient) -> None:
-        queue = self.queues[station]
+    async def asset_worker(self, asset_id: str, mqtt: MqttClient) -> None:
+        queue = self.queues[asset_id]
         while True:
-            signal, value, binding = await queue.get()
+            event, binding = await queue.get()
             try:
-                await self.update_aas(station, signal, value, binding)
+                await self.update_aas(event, binding)
             except Exception as exc:
-                print(f"[TELEMETRY] Permanent failure for {station}/{signal}: {exc}")
-                await self.publish_fault(mqtt, station, str(exc))
+                print(
+                    f"[TELEMETRY] Permanent failure for "
+                    f"{event.asset_id}/{event.semantic_id}: {exc}"
+                )
+                await self.publish_fault(mqtt, str(exc), event)
             finally:
                 queue.task_done()
 
-    async def apply_manifest(self, mqtt: MqttClient, topic: str, payload: bytes) -> None:
-        station, signals = parse_manifest(topic, payload)
-        self.bindings[station] = signals
-        self.ensure_station(f"station:{station}", mqtt)
-        print(f"[DISCOVERY] Applied manifest for {station!r}; signals={sorted(signals)}")
+    async def accept_event(
+        self, mqtt: MqttClient, event: TelemetryEvent
+    ) -> TelemetryEvent:
+        binding = self.bindings.get((event.asset_id, event.semantic_id))
+        if binding is None:
+            # Close the race between a Registry change and the periodic refresh.
+            await self.refresh_catalog()
+            binding = self.bindings.get((event.asset_id, event.semantic_id))
+        if binding is None:
+            raise ValueError(
+                "No unique semantic Property route for "
+                f"assetId={event.asset_id!r}, semanticId={event.semantic_id!r}"
+            )
+        queue = self.ensure_asset(event.asset_id, mqtt)
+        if not self.remember_event(event.asset_id, event.event_id):
+            print(
+                f"[TELEMETRY] Ignored duplicate {event.asset_id}/"
+                f"{event.semantic_id} eventId={event.event_id}"
+            )
+            return event
+        await queue.put((event, binding))
+        return event
 
-    async def accept_telemetry(self, mqtt: MqttClient, topic: str, payload: bytes) -> None:
-        target_type, target_id, signal, value, event_id = parse_telemetry(topic, payload)
-        target_bindings = {
-            "station": self.bindings,
-            "robot": self.robot_bindings,
-            "conveyor": self.conveyor_bindings,
-        }[target_type]
-        if target_id not in target_bindings:
-            raise ValueError(f"Unknown {target_type} {target_id!r}")
-        if signal not in target_bindings[target_id]:
-            raise ValueError(f"Signal {signal!r} is not declared by {target_type} {target_id!r}")
-        queue_key = f"{target_type}:{target_id}"
-        queue = self.ensure_station(queue_key, mqtt)
-        if not self.remember_event(queue_key, event_id):
-            print(f"[TELEMETRY] Ignored duplicate {target_id}/{signal} eventId={event_id}")
-            return
-        await queue.put((signal, value, target_bindings[target_id][signal]))
+    async def accept_telemetry(self, mqtt: MqttClient, payload: bytes) -> TelemetryEvent:
+        return await self.accept_event(mqtt, parse_telemetry(payload))
 
     async def run_connected(self) -> None:
+        await self.refresh_catalog()
         async with MqttClient(self.config.mqtt_host, self.config.mqtt_port) as mqtt:
+            refresher = asyncio.create_task(self.catalog_refresher())
             try:
-                for station in self.bindings:
-                    self.ensure_station(f"station:{station}", mqtt)
-                for robot in self.robot_bindings:
-                    self.ensure_station(f"robot:{robot}", mqtt)
-                for conveyor in self.conveyor_bindings:
-                    self.ensure_station(f"conveyor:{conveyor}", mqtt)
-                await mqtt.subscribe(self.config.manifest_topic, qos=1)
                 await mqtt.subscribe(self.config.telemetry_topic, qos=1)
-                await mqtt.subscribe(self.config.legacy_telemetry_topic, qos=1)
-                await mqtt.subscribe(self.config.robot_telemetry_topic, qos=1)
-                await mqtt.subscribe(self.config.conveyor_telemetry_topic, qos=1)
                 print(
-                    f"[TELEMETRY] Listening on {self.config.telemetry_topic} and "
-                    f"{self.config.legacy_telemetry_topic} and "
-                    f"{self.config.robot_telemetry_topic} and "
-                    f"{self.config.conveyor_telemetry_topic}; "
-                    f"manifests={self.config.manifest_topic}"
+                    f"[TELEMETRY] Listening on {self.config.telemetry_topic}; "
+                    "routing by assetId + semanticId"
                 )
                 async for message in mqtt.messages:
-                    topic = str(message.topic)
+                    event: TelemetryEvent | None = None
                     try:
-                        if topic.startswith("factory/") and topic.endswith("/manifest"):
-                            await self.apply_manifest(mqtt, topic, message.payload)
-                        else:
-                            await self.accept_telemetry(mqtt, topic, message.payload)
-                    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, KeyError) as exc:
-                        print(f"[TELEMETRY] Rejected message on {topic}: {exc}")
-                        parts = topic.split("/")
-                        station = normalize_station_id(parts[1]) if len(parts) > 1 else "unknown"
-                        await self.publish_fault(mqtt, station, str(exc))
+                        event = parse_telemetry(message.payload)
+                        await self.accept_event(mqtt, event)
+                    except (
+                        UnicodeDecodeError, json.JSONDecodeError, ValueError, KeyError
+                    ) as exc:
+                        print(f"[TELEMETRY] Rejected message: {exc}")
+                        await self.publish_fault(mqtt, str(exc), event)
             finally:
+                refresher.cancel()
+                await asyncio.gather(refresher, return_exceptions=True)
                 await self.stop_workers()
 
     async def run(self) -> None:

@@ -42,6 +42,15 @@ def build_invocation_payload(
                     "idShort": parameter.id_short,
                     "valueType": parameter.value_type or "xs:string",
                     "value": semantic_arguments[semantic_id],
+                    "semanticId": {
+                        "type": "ExternalReference",
+                        "keys": [
+                            {
+                                "type": "GlobalReference",
+                                "value": semantic_id,
+                            }
+                        ],
+                    },
                 }
             }
         )
