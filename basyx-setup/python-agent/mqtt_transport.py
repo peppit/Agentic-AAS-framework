@@ -7,6 +7,8 @@ from aiomqtt import MqttError
 
 from config_models import AgentConfig
 from orchestration import FactoryOrchestrator
+from registry_client import RegistryClient
+from semantic_catalog import SemanticCatalog
 
 
 def parse_topic(topic: str) -> Optional[tuple[str, str]]:
@@ -48,6 +50,20 @@ def is_station_status_topic(topic: str) -> bool:
 
 
 async def run_agent(config: AgentConfig) -> None:
+    if config.semantic_discovery_diagnostic:
+        try:
+            async with RegistryClient(
+                config.aas_registry_url,
+                config.submodel_registry_url,
+                timeout_seconds=config.http_timeout_seconds,
+            ) as registry_client:
+                catalog = await SemanticCatalog.discover(registry_client)
+            print(catalog.diagnostic_summary())
+        except Exception as exc:
+            # Phase 1 discovery is diagnostic-only and must not take down the
+            # established station-based runtime path.
+            print(f"[SEMANTIC DISCOVERY] Diagnostic failed: {exc}")
+
     orchestrator = FactoryOrchestrator(config)
     worker = asyncio.create_task(orchestrator.start_worker())
     dispatcher = asyncio.create_task(orchestrator.start_dispatcher())

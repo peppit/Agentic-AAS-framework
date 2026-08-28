@@ -214,6 +214,10 @@ services:
       - HTTP_TIMEOUT_SECONDS=8
       - QUEUE_TIMEOUT_SECONDS=${QUEUE_TIMEOUT_SECONDS:-60}
       - OPERATION_TIMEOUT_SECONDS=${OPERATION_TIMEOUT_SECONDS:-60}
+      - AAS_REGISTRY_URL=http://aas-registry:8080
+      - SUBMODEL_REGISTRY_URL=http://sm-registry:8080
+      - REGISTRY_REFRESH_SECONDS=5
+      - SEMANTIC_DISCOVERY_DIAGNOSTIC=true
       - STATION_REGISTRY_FILE=/config/stations.json
       - ORCHESTRATOR_LOG_CSV_PATH=/app/orchestrator_logs.csv
       - ORCHESTRATOR_SUMMARY_CSV_PATH=/app/orchestrator_summary.csv

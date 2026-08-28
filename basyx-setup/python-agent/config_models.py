@@ -30,6 +30,18 @@ class AgentConfig:
         "factory/robots",
     )
     basyx_base_url: str = os.getenv("BASYX_BASE_URL", "http://aas-env:8081")
+    aas_registry_url: str = os.getenv(
+        "AAS_REGISTRY_URL", "http://aas-registry:8080"
+    )
+    submodel_registry_url: str = os.getenv(
+        "SUBMODEL_REGISTRY_URL", "http://sm-registry:8080"
+    )
+    registry_refresh_seconds: float = float(
+        os.getenv("REGISTRY_REFRESH_SECONDS", "5")
+    )
+    semantic_discovery_diagnostic: bool = os.getenv(
+        "SEMANTIC_DISCOVERY_DIAGNOSTIC", "false"
+    ).strip().lower() in {"true", "1", "on", "yes"}
     http_timeout_seconds: float = float(os.getenv("HTTP_TIMEOUT_SECONDS", "8"))
     job_retry_seconds: float = float(os.getenv("JOB_RETRY_SECONDS", "0.5"))
     job_timeout_seconds: float = float(os.getenv("JOB_TIMEOUT_SECONDS", "60"))
