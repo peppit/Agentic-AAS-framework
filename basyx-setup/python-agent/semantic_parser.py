@@ -21,6 +21,7 @@ from semantics import (
     IDTA_CAPABILITY_ROLE_OFFERED,
     IDTA_CAPABILITY_ROLE_REQUIRED,
     IDTA_CONTROL_COMPONENT_SKILL,
+    IDTA_SKILL_DISABLED,
     PROCESS_REQUIREMENTS,
     REQUIRED_CAPABILITY,
     SKILL_INVOKED_BY_OPERATION,
@@ -150,6 +151,7 @@ class ParsedSemanticInventory:
     capability_offers: list[CapabilityOffer] = field(default_factory=list)
     operation_bindings: list[OperationBinding] = field(default_factory=list)
     reachability_by_skill_ref: dict[ElementRef, set[str]] = field(default_factory=dict)
+    skill_disabled_by_skill_ref: dict[ElementRef, object] = field(default_factory=dict)
     state_definitions: list[ResourceStateDefinition] = field(default_factory=list)
     process_requirements: list[ProcessRequirement] = field(default_factory=list)
     diagnostics: list[ValidationDiagnostic] = field(default_factory=list)
@@ -179,6 +181,7 @@ class SemanticParser:
             capability_offers=self._parse_capability_offers(),
             operation_bindings=self._parse_operation_bindings(),
             reachability_by_skill_ref=self._parse_reachability(),
+            skill_disabled_by_skill_ref=self._parse_skill_disabled(),
             state_definitions=self._parse_state_definitions(),
             process_requirements=self._parse_process_requirements(),
             diagnostics=self.diagnostics,
@@ -351,6 +354,23 @@ class SemanticParser:
                 target.canonical_id
             )
         return reachability
+
+    def _parse_skill_disabled(self) -> dict[ElementRef, object]:
+        disabled: dict[ElementRef, object] = {}
+        for skill_ref, skill in self._elements_with_semantic(
+            IDTA_CONTROL_COMPONENT_SKILL
+        ):
+            property_value = next(
+                (
+                    element.get("value")
+                    for element in self._descendants(skill)
+                    if IDTA_SKILL_DISABLED in get_semantic_ids(element)
+                ),
+                None,
+            )
+            if property_value is not None:
+                disabled[skill_ref] = property_value
+        return disabled
 
     def _parse_state_definitions(self) -> list[ResourceStateDefinition]:
         definitions: list[ResourceStateDefinition] = []

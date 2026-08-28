@@ -54,6 +54,9 @@ IDTA_CONTROL_COMPONENT_SKILL = (
 IDTA_SKILL_PARAMETER = (
     "https://admin-shell.io/idta/ControlComponent/Skill/Parameter/2/0"
 )
+IDTA_SKILL_DISABLED = (
+    "https://admin-shell.io/idta/ControlComponent/Skill/Disabled/2/0"
+)
 
 # IDTA Hierarchical Structures 1.0 identifier used by co-managed entities.
 IDTA_HIERARCHICAL_STRUCTURES_NODE = (

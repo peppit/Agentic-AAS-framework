@@ -1,3 +1,5 @@
+"""MQTT transport for semantic AAS state events and operation replies."""
+
 import asyncio
 import time
 from typing import Optional
@@ -5,10 +7,9 @@ from typing import Optional
 from aiomqtt import Client as MqttClient
 from aiomqtt import MqttError
 
+from catalog_runtime import CatalogManager
 from config_models import AgentConfig
 from orchestration import FactoryOrchestrator
-from registry_client import RegistryClient
-from semantic_catalog import SemanticCatalog
 
 
 def parse_topic(topic: str) -> Optional[tuple[str, str]]:
@@ -18,7 +19,7 @@ def parse_topic(topic: str) -> Optional[tuple[str, str]]:
         and parts[0] == "sm-repository"
         and parts[2] == "submodels"
         and parts[4] == "submodelElements"
-        and parts[6] == "updated"
+        and parts[-1] == "updated"
     ):
         return parts[3], parts[5]
     return None
@@ -26,47 +27,21 @@ def parse_topic(topic: str) -> Optional[tuple[str, str]]:
 
 def is_operation_reply_topic(topic: str) -> bool:
     parts = topic.split("/")
-    return (
-        len(parts) == 4
-        and parts[0] == "simulation"
-        and parts[2] == "replies"
-        and bool(parts[1])
-        and bool(parts[3])
-    )
-
-
-def is_server_status_topic(topic: str) -> bool:
-    return topic == "simulation/server/status"
-
-
-def is_station_status_topic(topic: str) -> bool:
-    parts = topic.split("/")
-    return (
-        len(parts) == 3
-        and parts[0] == "simulation"
-        and parts[1] != "server"
-        and parts[2] == "status"
-    )
+    return len(parts) >= 4 and parts[0] == "simulation" and "replies" in parts
 
 
 async def run_agent(config: AgentConfig) -> None:
+    catalog_manager = await CatalogManager.discover(config)
+    initial_catalog = await catalog_manager.snapshot()
     if config.semantic_discovery_diagnostic:
-        try:
-            async with RegistryClient(
-                config.aas_registry_url,
-                config.submodel_registry_url,
-                timeout_seconds=config.http_timeout_seconds,
-            ) as registry_client:
-                catalog = await SemanticCatalog.discover(registry_client)
-            print(catalog.diagnostic_summary())
-        except Exception as exc:
-            # Phase 1 discovery is diagnostic-only and must not take down the
-            # established station-based runtime path.
-            print(f"[SEMANTIC DISCOVERY] Diagnostic failed: {exc}")
+        print(initial_catalog.diagnostic_summary())
 
-    orchestrator = FactoryOrchestrator(config)
+    orchestrator = FactoryOrchestrator(config, catalog_manager)
+    await orchestrator.initialize()
     worker = asyncio.create_task(orchestrator.start_worker())
-    dispatcher = asyncio.create_task(orchestrator.start_dispatcher())
+    refresher = asyncio.create_task(
+        catalog_manager.run_refresh_loop(orchestrator.reconcile_catalog)
+    )
 
     try:
         while True:
@@ -75,26 +50,13 @@ async def run_agent(config: AgentConfig) -> None:
                     hostname=config.mqtt_host,
                     port=config.mqtt_port,
                 ) as client:
-                    async def publish_fault_state(topic: str, payload: str) -> None:
-                        await client.publish(
-                            topic,
-                            payload,
-                            qos=1,
-                            retain=True,
-                        )
-
-                    orchestrator.fault_state_publisher = publish_fault_state
                     await client.subscribe(config.mqtt_topic)
                     await client.subscribe(config.operation_reply_topic)
-                    await client.subscribe(config.server_status_topic)
-                    await client.subscribe(config.station_status_topic)
                     print(
                         "[AGENT] Connected to MQTT broker "
-                        f"{config.mqtt_host}:{config.mqtt_port}, subscribed "
-                        f"to {config.mqtt_topic} and "
-                        f"{config.operation_reply_topic}, "
-                        f"{config.server_status_topic}, and "
-                        f"{config.station_status_topic}"
+                        f"{config.mqtt_host}:{config.mqtt_port}; subscribed "
+                        f"to semantic states {config.mqtt_topic} and "
+                        f"operation replies {config.operation_reply_topic}"
                     )
 
                     async for message in client.messages:
@@ -103,19 +65,12 @@ async def run_agent(config: AgentConfig) -> None:
                         if is_operation_reply_topic(topic):
                             await orchestrator.handle_operation_ack(payload)
                             continue
-                        if is_server_status_topic(topic):
-                            await orchestrator.handle_server_status(payload)
-                            continue
-                        if is_station_status_topic(topic):
-                            await orchestrator.handle_station_status(topic, payload)
-                            continue
-
                         parsed = parse_topic(topic)
                         if parsed is not None:
-                            submodel_b64, property_id = parsed
+                            submodel_token, element_token = parsed
                             await orchestrator.handle_event(
-                                submodel_b64,
-                                property_id,
+                                submodel_token,
+                                element_token,
                                 payload,
                                 topic,
                                 int(time.time() * 1000),
@@ -128,10 +83,6 @@ async def run_agent(config: AgentConfig) -> None:
                 await asyncio.sleep(3)
     finally:
         worker.cancel()
-        dispatcher.cancel()
-        await asyncio.gather(
-            worker,
-            dispatcher,
-            return_exceptions=True,
-        )
+        refresher.cancel()
+        await asyncio.gather(worker, refresher, return_exceptions=True)
         await orchestrator.close()

@@ -48,6 +48,12 @@ class SemanticCatalog:
     reachability_by_skill_ref: dict[ElementRef, set[str]] = field(
         default_factory=dict
     )
+    skill_disabled_by_skill_ref: dict[ElementRef, object] = field(
+        default_factory=dict
+    )
+    state_elements_by_ref: dict[ElementRef, ResourceStateDefinition] = field(
+        default_factory=dict
+    )
     state_elements_by_asset_and_semantic: dict[
         tuple[str, str], ResourceStateDefinition
     ] = field(default_factory=dict)
@@ -167,8 +173,13 @@ class SemanticCatalog:
             binding.skill_ref: binding for binding in parsed.operation_bindings
         }
         catalog.reachability_by_skill_ref = parsed.reachability_by_skill_ref
+        catalog.skill_disabled_by_skill_ref = parsed.skill_disabled_by_skill_ref
         catalog.state_elements_by_asset_and_semantic = {
             (definition.owner_asset_id, definition.semantic_id): definition
+            for definition in parsed.state_definitions
+        }
+        catalog.state_elements_by_ref = {
+            definition.element_ref: definition
             for definition in parsed.state_definitions
         }
         catalog.process_requirements = parsed.process_requirements

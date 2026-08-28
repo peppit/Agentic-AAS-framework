@@ -1,913 +1,559 @@
+"""SemanticCatalog-driven factory orchestration runtime."""
+
 import asyncio
 import base64
-import csv
 import json
 import time
 import uuid
-from collections import defaultdict, deque
-from pathlib import Path
-from statistics import mean
-from typing import Optional
+from dataclasses import dataclass
+from urllib.parse import unquote
 
 import httpx
-import traceback
 
-from aas_access import (
-    fetch_supported_capabilities,
-    invoke_operation,
-    read_robot_bool_state,
+from aas_access import invoke_operation
+from catalog_runtime import CatalogManager
+from config_models import AgentConfig, parse_bool_value
+from research_metrics import SemanticMetricsLogger
+from reservation import ReservationManager
+from semantic_catalog import SemanticCatalog
+from semantic_model import (
+    CapabilityOffer,
+    ElementRef,
+    OperationBinding,
+    ProcessJob,
+    ProcessRequirement,
+    ResourceStateDefinition,
 )
-from capability_matching import (
-    build_operation_inputs,
-    match_capability_route,
+from semantics import (
+    AVAILABLE_FOR_SCHEDULING,
+    FAULT_ACTIVE,
+    IS_MOVING,
+    SOURCE_TRANSFER_LOCATION,
+    TARGET_TRANSFER_LOCATION,
 )
-from config_models import (
-    AgentConfig,
-    RobotEndpoints,
-    build_robot_endpoints,
-    build_station_bindings,
-    load_asset_registry,
-    normalize_station_id,
-    normalize_submodel_id,
-    parse_bool_value,
-)
-from lifecycle import LifecycleCoordinator
+
+
+@dataclass
+class ActiveExecution:
+    job: ProcessJob
+    binding: OperationBinding
+    timeout_task: asyncio.Task | None = None
+    operation_started: bool = False
+
+
+def _decode_submodel_identifier(value: str) -> str:
+    """Decode a BaSyx base64url topic token, retaining plain identifiers."""
+
+    try:
+        padding = "=" * (-len(value) % 4)
+        decoded = base64.urlsafe_b64decode(value + padding).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return value
+    return decoded if decoded.strip() else value
+
+
+def select_candidate(
+    candidates: list[tuple[CapabilityOffer, OperationBinding]],
+    selected_resource_id: str,
+) -> tuple[CapabilityOffer, OperationBinding]:
+    """Isolated stable-first policy result lookup."""
+
+    return min(
+        (
+            candidate
+            for candidate in candidates
+            if candidate[0].owner_asset_id == selected_resource_id
+        ),
+        key=lambda candidate: (
+            candidate[0].owner_asset_id,
+            candidate[0].skill_ref.submodel_id,
+            candidate[0].skill_ref.id_short_path,
+        ),
+    )
 
 
 class FactoryOrchestrator:
-    def __init__(self, config: AgentConfig):
+    """Schedule ProcessRequirements exclusively from a catalog snapshot."""
+
+    def __init__(
+        self,
+        config: AgentConfig,
+        catalog_manager: CatalogManager,
+        *,
+        http_client: httpx.AsyncClient | None = None,
+        reservations: ReservationManager | None = None,
+    ) -> None:
         self.config = config
-        self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(self.config.http_timeout_seconds))
-        self.job_queue = asyncio.Queue()
-        self.dispatch_queue = asyncio.Queue()
-        self.run_id = self.config.measurement_run_id.strip() or str(uuid.uuid4())
-        self.lifecycle = LifecycleCoordinator(self.config.operation_timeout_seconds)
-        self.lifecycle.on_robot_available = self._schedule_next_for_robot
-        # Compatibility aliases keep the existing public surface while lifecycle
-        # state and transitions are owned by LifecycleCoordinator.
-        self.active_jobs = self.lifecycle.active_jobs
-        self.sensor_states = self.lifecycle.sensor_states
-        self.sensor_waiting_for_clear = self.lifecycle.sensor_waiting_for_clear
-        self.station_lifecycles = self.lifecycle.station_lifecycles
-        self.lifecycle_by_request_id = self.lifecycle.lifecycle_by_request_id
-        self.reserved_robots = self.lifecycle.reserved_robots
-        self.box_queues_by_station: dict[str, deque[dict]] = defaultdict(deque)
-        self.pending_by_robot: dict[str, deque[dict]] = defaultdict(deque)
-        self.pending_unassigned: deque[dict] = deque()
-        self.pending_by_station: dict[str, deque[dict]] = defaultdict(deque)
-        self.pending_request_ids: set[str] = set()
-        self.pending_timeout_tasks: dict[str, asyncio.Task] = {}
-        self.server_online = False
-        self.server_instance_id = ""
-        self.station_statuses: dict[str, dict] = {}
-        self.fault_state_publisher = None
-        self.published_fault_states: dict[str, bool] = {}
-        self.log_lock = asyncio.Lock()
-        self.logged_samples = 0
-        self.log_headers = [
-            "request_id",
-            "run_id",
-            "station_id",
-            "sample",
-            "t1_ms",
-            "t2_ms",
-            "t3_ms",
-            "status",
-        ]
-        self.summary_headers = [
-            "batch_id",
-            "batch_size",
-            "ok_count",
-            "error_count",
-            "t1_ms_min",
-            "t1_ms_max",
-            "t1_ms_mean",
-            "t2_ms_min",
-            "t2_ms_max",
-            "t2_ms_mean",
-            "t3_ms_min",
-            "t3_ms_max",
-            "t3_ms_mean",
-        ]
-        self.summary_batch_id = 0
-        self.summary_buffer: list[dict] = []
-        self.log_path = Path(self.config.orchestrator_log_csv_path)
-        self.summary_path = Path(self.config.orchestrator_summary_csv_path)
-        asset_registry = load_asset_registry(self.config.station_registry_file)
-        self.station_by_conveyor_submodel = build_station_bindings(asset_registry)
-        self._ensure_csv_file(self.log_path, self.log_headers, check_headers=True)
-        self._ensure_csv_file(self.summary_path, self.summary_headers)
-        self.robots = build_robot_endpoints(asset_registry)
-        if not self.robots:
-            print("[ORCHESTRATOR] Warning: no robot bindings configured; dispatch cannot start")
-        print(f"[ORCHESTRATOR] Measurement run_id={self.run_id}")
-
-    def _ensure_csv_file(self, path: Path, headers: list[str], check_headers: bool = False) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists() and path.stat().st_size > 0:
-            if not check_headers: return
-            try:
-                with path.open("r", encoding="utf-8") as f:
-                    if f.readline().strip() == ",".join(headers): return
-                raise RuntimeError(
-                    f"Unexpected CSV header in {path}. Move or rename the "
-                    "previous log before starting a new run."
-                )
-            except OSError:
-                pass
-        with path.open("w", newline="", encoding="utf-8") as f:
-            csv.DictWriter(f, fieldnames=headers).writeheader()
-    
-    async def close(self):
-        for task in self.pending_timeout_tasks.values():
-            task.cancel()
-        await asyncio.gather(
-            *self.pending_timeout_tasks.values(),
-            return_exceptions=True,
+        self.catalog_manager = catalog_manager
+        self._owns_http_client = http_client is None
+        self.http_client = http_client or httpx.AsyncClient(
+            timeout=httpx.Timeout(config.http_timeout_seconds)
         )
-        self.pending_timeout_tasks.clear()
-        self.pending_request_ids.clear()
-        await self.lifecycle.close()
-        await self.http_client.aclose()
+        self.reservations = reservations or ReservationManager()
+        self.job_queue: asyncio.Queue[ProcessJob] = asyncio.Queue()
+        self.state: dict[str, dict[str, object]] = {}
+        self.latched_triggers: set[tuple[str, str]] = set()
+        self.active_jobs_by_request_id: dict[str, ActiveExecution] = {}
+        self.run_id = config.measurement_run_id.strip() or str(uuid.uuid4())
+        self.metrics = SemanticMetricsLogger(
+            config.orchestrator_log_csv_path, self.run_id
+        )
 
-    async def _append_log_row(self, row: dict) -> None:
-        async with self.log_lock:
-            with self.log_path.open("a", newline="", encoding="utf-8") as f:
-                csv.DictWriter(f, fieldnames=self.log_headers).writerow({k: row.get(k, "") for k in self.log_headers})
-    
-    def _safe_float(self, value: object) -> Optional[float]:
-        if value is None:
-            return None
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
+    async def initialize(self) -> None:
+        catalog = await self.catalog_manager.snapshot()
+        await self.reconcile_catalog(SemanticCatalog(), catalog)
+        print(
+            f"[ORCHESTRATOR] Semantic runtime initialized "
+            f"resources={len(catalog.resources)} run_id={self.run_id}"
+        )
 
-    async def _append_summary_row_if_ready(self, row: dict) -> None:
-        async with self.log_lock:
-            batch_size = max(1, self.config.summary_batch_size)
-            t1 = self._safe_float(row.get("t1_ms"))
-            t2 = self._safe_float(row.get("t2_ms"))
-            t3 = self._safe_float(row.get("t3_ms"))
+    async def close(self) -> None:
+        executions = list(self.active_jobs_by_request_id.values())
+        for execution in executions:
+            await self._finish_execution(
+                execution,
+                "failed",
+                "orchestrator shutdown",
+            )
+        for resource_id in list(self.reservations.reserved_resources):
+            await self.reservations.release(resource_id)
+        if self._owns_http_client:
+            await self.http_client.aclose()
 
-            if t1 is None or t2 is None or t3 is None:
-                return
+    async def reconcile_catalog(
+        self, previous: SemanticCatalog, refreshed: SemanticCatalog
+    ) -> None:
+        previous_ids = set(previous.assets_by_global_id)
+        for definition in refreshed.state_elements_by_ref.values():
+            asset_state = self.state.setdefault(definition.owner_asset_id, {})
+            if definition.semantic_id not in asset_state:
+                value = parse_bool_value(definition.current_value)
+                asset_state[definition.semantic_id] = (
+                    value if value is not None else definition.current_value
+                )
+                trigger_key = (
+                    definition.owner_asset_id,
+                    definition.semantic_id,
+                )
+                if value is True and trigger_key in refreshed.requirements_by_trigger:
+                    self.latched_triggers.add(trigger_key)
 
-            self.summary_buffer.append(
+        for resource_id in sorted(set(refreshed.assets_by_global_id) - previous_ids):
+            offered = sorted(
                 {
-                    "status": str(row.get("status", "")),
-                    "t1_ms": t1,
-                    "t2_ms": t2,
-                    "t3_ms": t3,
+                    semantic_id
+                    for semantic_id, offers in refreshed.capabilities_by_semantic_id.items()
+                    if any(offer.owner_asset_id == resource_id for offer in offers)
                 }
             )
-
-            if len(self.summary_buffer) < batch_size:
-                return
-
-            batch = self.summary_buffer[:batch_size]
-            self.summary_buffer = self.summary_buffer[batch_size:]
-            self.summary_batch_id += 1
-
-            ok_count = sum(1 for item in batch if item["status"] == "ok")
-            error_count = len(batch) - ok_count
-
-            def stats(values: list[int]) -> tuple[int, int, float]:
-                return min(values), max(values), float(mean(values))
-
-            t1_min, t1_max, t1_mean = stats([item["t1_ms"] for item in batch])
-            t2_min, t2_max, t2_mean = stats([item["t2_ms"] for item in batch])
-            t3_min, t3_max, t3_mean = stats([item["t3_ms"] for item in batch])
-
-            summary_row = {
-                "batch_id": self.summary_batch_id,
-                "batch_size": len(batch),
-                "ok_count": ok_count,
-                "error_count": error_count,
-                "t1_ms_min": t1_min,
-                "t1_ms_max": t1_max,
-                "t1_ms_mean": f"{t1_mean:.3f}",
-                "t2_ms_min": t2_min,
-                "t2_ms_max": t2_max,
-                "t2_ms_mean": f"{t2_mean:.3f}",
-                "t3_ms_min": t3_min,
-                "t3_ms_max": t3_max,
-                "t3_ms_mean": f"{t3_mean:.3f}",
-            }
-
-            with self.summary_path.open("a", newline="", encoding="utf-8") as file:
-                writer = csv.DictWriter(file, fieldnames=self.summary_headers)
-                writer.writerow(summary_row)
-
-        print(f"[ORCHESTRATOR] Logged summary batch #{self.summary_batch_id} to {self.summary_path}")
-
-    async def _log_and_print(self, row: dict) -> None:
-        await self._append_log_row(row)
-        await self._append_summary_row_if_ready(row)
-        print(f"[ORCHESTRATOR] Logged run # status={row.get('status')} sensor={row.get('sensor')}")
-
-    async def _log_request_status(self, request: dict, status: str) -> None:
-        if request.get("latency_logged"):
-            return
-        self.logged_samples += 1
-        row = {
-            "request_id": request.get("request_id"),
-            "run_id": request.get("run_id") or self.run_id,
-            "station_id": request.get("station_id") or "",
-            "sample": self.logged_samples,
-            "t1_ms": request.get("t1_ms"),
-            "t2_ms": request.get("t2_ms"),
-            "t3_ms": request.get("t3_ms"),
-            "status": status,
-        }
-        if status == "ok":
-            timestamps = [
-                self._safe_float(row[key])
-                for key in ("t1_ms", "t2_ms", "t3_ms")
-            ]
-            if (
-                not all(
-                    row.get(key) not in (None, "")
-                    for key in self.log_headers
-                )
-                or any(value is None for value in timestamps)
-                or not timestamps[0] <= timestamps[1] <= timestamps[2]
-            ):
-                row["status"] = "failed"
-        await self._log_and_print(row)
-        request["latency_logged"] = True
+            print(
+                "[CATALOG] semantic resource added: "
+                f"globalAssetId={resource_id} offeredCapabilities={offered}"
+            )
 
     @staticmethod
-    def _robot_id(robot: RobotEndpoints) -> str:
-        if robot.robot_id:
-            return robot.robot_id.replace("/", "_").replace("+", "_").replace("#", "_")
-        encoded = robot.state_submodel_b64
-        try:
-            padding = "=" * (-len(encoded) % 4)
-            decoded = base64.urlsafe_b64decode(encoded + padding).decode("utf-8")
-            robot_id = decoded.rstrip("/").rsplit("/", 1)[-1]
-        except (ValueError, UnicodeDecodeError):
-            robot_id = encoded
-        return robot_id.replace("/", "_").replace("+", "_").replace("#", "_")
+    def _event_element_candidates(element_token: str) -> list[str]:
+        decoded = unquote(element_token)
+        candidates = [decoded]
+        dotted = decoded.replace("/", ".")
+        if dotted not in candidates:
+            candidates.append(dotted)
+        return candidates
 
-    async def _publish_robot_fault_state(
+    @staticmethod
+    def _resolve_state_definition(
+        catalog: SemanticCatalog,
+        submodel_token: str,
+        element_token: str,
+    ) -> ResourceStateDefinition | None:
+        submodel_candidates = [submodel_token]
+        decoded_submodel = _decode_submodel_identifier(submodel_token)
+        if decoded_submodel not in submodel_candidates:
+            submodel_candidates.append(decoded_submodel)
+
+        for submodel_id in submodel_candidates:
+            if submodel_id not in catalog.asset_by_submodel_id:
+                continue
+            for path in FactoryOrchestrator._event_element_candidates(element_token):
+                definition = catalog.state_elements_by_ref.get(
+                    ElementRef(submodel_id, path)
+                )
+                if definition is not None:
+                    return definition
+
+            # Some BaSyx event transports emit only the leaf idShort. It is
+            # still used solely to address an already semantically indexed
+            # property; ambiguous suffixes are rejected.
+            leaf = FactoryOrchestrator._event_element_candidates(element_token)[-1]
+            matches = [
+                definition
+                for ref, definition in catalog.state_elements_by_ref.items()
+                if ref.submodel_id == submodel_id
+                and ref.id_short_path.rsplit(".", 1)[-1] == leaf.rsplit(".", 1)[-1]
+            ]
+            if len(matches) == 1:
+                return matches[0]
+        return None
+
+    async def handle_event(
         self,
-        robot: RobotEndpoints,
-        fault_active: Optional[bool],
-        observed_at_ms: Optional[int] = None,
+        submodel_token: str,
+        element_token: str,
+        payload: str,
+        mqtt_topic: str = "",
+        received_at_ms: int | None = None,
     ) -> None:
-        if fault_active is None or self.fault_state_publisher is None:
-            return
-        robot_key = robot.state_submodel_b64
-        if self.published_fault_states.get(robot_key) is fault_active:
-            return
-
-        robot_id = self._robot_id(robot)
-        topic_prefix = self.config.robot_fault_topic_prefix.rstrip("/")
-        topic = f"{topic_prefix}/{robot_id}/fault"
-        payload = json.dumps(
-            {
-                "robotId": robot_id,
-                "stationId": robot.station_id,
-                "faultActive": fault_active,
-                "observedAtMs": observed_at_ms or int(time.time() * 1000),
-                "source": "RobotStateAAS",
-            },
-            separators=(",", ":"),
+        catalog = await self.catalog_manager.snapshot()
+        definition = self._resolve_state_definition(
+            catalog, submodel_token, element_token
         )
-        try:
-            await self.fault_state_publisher(topic, payload)
-        except Exception as exc:
+        if definition is None:
             print(
-                f"[ORCHESTRATOR] Failed to publish fault state for "
-                f"{robot_id}: {exc}"
+                "[ORCHESTRATOR] Ignored unindexed AAS state event "
+                f"submodel={submodel_token} element={element_token}"
             )
             return
-        self.published_fault_states[robot_key] = fault_active
-        print(
-            f"[ORCHESTRATOR] Published retained fault state "
-            f"robot={robot_id} faultActive={fault_active} topic={topic}"
-        )
 
-
-    async def handle_event(self, submodel_b64: str, property_id: str, payload: str, mqtt_topic: str, received_at_ms: int) -> None:
-
-        if property_id == "FaultActive":
-            fault_active = parse_bool_value(payload)
-            robot = next(
-                (
-                    candidate
-                    for candidate in self.robots
-                    if candidate.state_submodel_b64
-                    == normalize_submodel_id(submodel_b64)
-                ),
-                None,
-            )
-            if robot is not None:
-                await self._publish_robot_fault_state(
-                    robot,
-                    fault_active,
-                    received_at_ms,
-                )
-            return
-
-        if "Present" not in property_id and "Clear" not in property_id: 
-            return
-
-        if (bool_value:=parse_bool_value(payload)) is None:
+        value = parse_bool_value(payload)
+        if value is None:
             print(
-                f"[ORCHESTRATOR] Ignored sensor event {property_id}: "
-                f"payload did not resolve to boolean ({payload})"
+                "[ORCHESTRATOR] Ignored non-boolean semantic state event "
+                f"asset={definition.owner_asset_id} "
+                f"semantic={definition.semantic_id} payload={payload!r}"
             )
             return
 
-        sensor_key = f"{submodel_b64}:{property_id}"
-        self.sensor_states[sensor_key] = bool_value
+        asset_state = self.state.setdefault(definition.owner_asset_id, {})
+        asset_state[definition.semantic_id] = value
+        trigger_key = (definition.owner_asset_id, definition.semantic_id)
+        requirements = catalog.requirements_by_trigger.get(trigger_key, [])
+        if not requirements:
+            return
 
-        station_id = self.station_by_conveyor_submodel.get(normalize_submodel_id(submodel_b64), "")
-
-        if not station_id:
+        if value is False:
+            self.latched_triggers.discard(trigger_key)
             print(
-                f"[ORCHESTRATOR] Ignored sensor {property_id}: "
-                f"no station binding for conveyor {submodel_b64}"
+                f"[ORCHESTRATOR] Semantic trigger rearmed asset={trigger_key[0]} "
+                f"semantic={trigger_key[1]}"
             )
             return
+        if trigger_key in self.latched_triggers:
+            return
 
-        if bool_value is False:
-            self.sensor_waiting_for_clear[sensor_key] = False
-            station_key = normalize_station_id(station_id)
-            box_queue = self.box_queues_by_station.get(station_key)
-            cleared_job = None
-            if box_queue:
-                for queued_job in box_queue:
-                    if (
-                        queued_job.get("sensor_key") == sensor_key
-                        and not queued_job.get("sensor_clear")
-                    ):
-                        cleared_job = queued_job
-                        break
-            if cleared_job is not None:
-                cleared_job["sensor_clear"] = True
-                box_queue.remove(cleared_job)
-                lifecycle = self.lifecycle_by_request_id.get(
-                    cleared_job["request_id"]
-                )
-                if lifecycle is not None:
-                    lifecycle["sensor_clear"] = True
-                    await self.lifecycle.try_finalize(lifecycle)
-            if box_queue is not None and not box_queue:
-                self.box_queues_by_station.pop(station_key, None)
+        self.latched_triggers.add(trigger_key)
+        for requirement in requirements:
+            job = self._create_job(requirement, received_at_ms)
+            if job is None:
+                continue
+            await self.job_queue.put(job)
             print(
-                f"[ORCHESTRATOR] Sensor '{property_id}' on Conveyor "
-                f"'{submodel_b64}' cleared; ready for next box detection"
+                f"[ORCHESTRATOR] Semantic job enqueued job_id={job.job_id} "
+                f"trigger={trigger_key} requirement={requirement.id_short or requirement.requirement_ref.id_short_path}"
             )
-            return
 
-        if self.sensor_waiting_for_clear.get(sensor_key):
-            return
-
-        request_id = str(uuid.uuid4())
-        job = {
-            "conveyor_b64": submodel_b64,
-            "station_id": station_id,
-            "sensor": property_id,
-            "sensor_key": sensor_key,
-            "sensor_clear": False,
-            "token": request_id,
-            "mqtt_topic": mqtt_topic,
-            "request_id": request_id,
-            "run_id": self.run_id,
-            "t1_ms": received_at_ms,
-            "deadline": time.monotonic() + self.config.queue_timeout_seconds,
-        }
-        self.sensor_waiting_for_clear[sensor_key] = True
-        self.active_jobs.add(request_id)
-        self.box_queues_by_station[normalize_station_id(station_id)].append(job)
-        await self.job_queue.put(job)
-        print(
-            f"[ORCHESTRATOR] Enqueued event request_id={request_id}: "
-            f"Sensor '{property_id}' triggered on Conveyor '{submodel_b64}'"
+    @staticmethod
+    def _create_job(
+        requirement: ProcessRequirement,
+        received_at_ms: int | None = None,
+    ) -> ProcessJob | None:
+        if (
+            not requirement.trigger_asset_id
+            or not requirement.trigger_semantic_id
+            or not requirement.source_id
+            or not requirement.target_id
+            or not requirement.required_capability_semantics
+        ):
+            print(
+                "[ORCHESTRATOR] ProcessRequirement is incomplete: "
+                f"{requirement.requirement_ref}"
+            )
+            return None
+        required_semantic = sorted(requirement.required_capability_semantics)[0]
+        return ProcessJob(
+            job_id=str(uuid.uuid4()),
+            requirement_ref=requirement.requirement_ref,
+            trigger_asset_id=requirement.trigger_asset_id,
+            trigger_semantic_id=requirement.trigger_semantic_id,
+            required_capability_semantic=required_semantic,
+            source_id=requirement.source_id,
+            target_id=requirement.target_id,
+            received_at_ms=received_at_ms,
         )
 
     async def start_worker(self) -> None:
         while True:
             job = await self.job_queue.get()
             try:
-                await self.process_factory_job(job)
-            except Exception:
-                traceback.print_exc()
-                await self._log_request_status(job, "failed")
-                if token := job.get("token"): self.active_jobs.discard(token)
-            self.job_queue.task_done()
-
-    async def start_dispatcher(self) -> None:
-        while True:
-            dispatch_job = await self.dispatch_queue.get()
-            try:
-                await self.dispatch_factory_job(dispatch_job)
-            except Exception as e:
-                print(f"[ERROR] Dispatch failed: {e}")
+                await self.process_job(job)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if job.selected_resource_id:
+                    await self.reservations.release(job.selected_resource_id)
+                self.active_jobs_by_request_id.pop(job.job_id, None)
+                await self.metrics.record(job, "failed", f"worker exception: {exc}")
+                print(f"[ORCHESTRATOR] Job {job.job_id} failed: {exc}")
             finally:
-                self.dispatch_queue.task_done()
+                self.job_queue.task_done()
 
-    async def _release_dispatch_job(self, dispatch_job: dict, reason: str) -> None:
-        robot_key = await self.lifecycle.release(dispatch_job, reason)
-        if robot_key:
-            await self._schedule_next_for_robot(robot_key)
+    def _state_value(self, asset_id: str, semantic_id: str) -> object | None:
+        return self.state.get(asset_id, {}).get(semantic_id)
+
+    def _state_rejection(self, offer: CapabilityOffer, catalog: SemanticCatalog) -> str:
+        resource_id = offer.owner_asset_id
+        available = self._state_value(resource_id, AVAILABLE_FOR_SCHEDULING)
+        if available is not True:
+            return f"AvailableForScheduling is {available!r}; fail-safe reject"
+        fault = self._state_value(resource_id, FAULT_ACTIVE)
+        if fault is True:
+            return "FaultActive is true"
+        moving = self._state_value(resource_id, IS_MOVING)
+        if moving is True:
+            return "IsMoving is true"
+        disabled = parse_bool_value(
+            catalog.skill_disabled_by_skill_ref.get(offer.skill_ref)
+        )
+        if disabled is True:
+            return "Skill.Disabled is true"
+        # Missing FaultActive means no fault assertion under the current state
+        # semantic contract. Missing availability is deliberately not allowed.
+        return ""
+
+    @staticmethod
+    def _parameter_rejection(binding: OperationBinding) -> str:
+        semantics = {
+            semantic_id
+            for parameter in binding.parameters
+            for semantic_id in parameter.semantic_ids
+        }
+        missing = {
+            SOURCE_TRANSFER_LOCATION,
+            TARGET_TRANSFER_LOCATION,
+        } - semantics
+        if missing:
+            return "semantic Operation parameter missing: " + ", ".join(
+                sorted(missing)
+            )
+        return ""
+
+    async def _fail_unreserved(
+        self, job: ProcessJob, reason: str
+    ) -> None:
+        await self.metrics.record(job, "failed", reason)
+        print(f"[ORCHESTRATOR] Job {job.job_id} failed: {reason}")
+
+    async def process_job(self, job: ProcessJob) -> None:
+        matching_started = time.perf_counter()
+        catalog = await self.catalog_manager.snapshot()
+        offers = sorted(
+            catalog.capabilities_by_semantic_id.get(
+                job.required_capability_semantic, []
+            ),
+            key=lambda offer: (
+                offer.owner_asset_id,
+                offer.skill_ref.submodel_id,
+                offer.skill_ref.id_short_path,
+            ),
+        )
+        job.candidate_count = len(offers)
+        if not offers:
+            job.matching_ms = (time.perf_counter() - matching_started) * 1000
+            await self._fail_unreserved(job, "no matching capability")
+            return
+
+        reachable: list[CapabilityOffer] = []
+        for offer in offers:
+            targets = catalog.reachability_by_skill_ref.get(offer.skill_ref, set())
+            if job.source_id not in targets or job.target_id not in targets:
+                print(
+                    f"[ORCHESTRATOR] Rejected resource={offer.owner_asset_id}: "
+                    f"Skill cannot reach both source={job.source_id} and target={job.target_id}"
+                )
+                continue
+            reachable.append(offer)
+        job.reachable_candidate_count = len(reachable)
+        if not reachable:
+            job.matching_ms = (time.perf_counter() - matching_started) * 1000
+            await self._fail_unreserved(job, "candidates but none reachable")
+            return
+
+        available: list[CapabilityOffer] = []
+        for offer in reachable:
+            rejection = self._state_rejection(offer, catalog)
+            if rejection:
+                print(
+                    f"[ORCHESTRATOR] Rejected resource={offer.owner_asset_id}: {rejection}"
+                )
+                continue
+            available.append(offer)
+        job.available_candidate_count = len(available)
+        if not available:
+            job.matching_ms = (time.perf_counter() - matching_started) * 1000
+            await self._fail_unreserved(
+                job, "candidates reachable but unavailable"
+            )
+            return
+
+        runnable: list[tuple[CapabilityOffer, OperationBinding]] = []
+        binding_failures: list[str] = []
+        for offer in available:
+            binding = catalog.operation_by_skill_ref.get(offer.skill_ref)
+            if binding is None or not binding.submodel_endpoint:
+                reason = "operation binding missing"
+            else:
+                reason = self._parameter_rejection(binding)
+            if reason:
+                binding_failures.append(reason)
+                print(
+                    f"[ORCHESTRATOR] Rejected resource={offer.owner_asset_id}: {reason}"
+                )
+                continue
+            runnable.append((offer, binding))
+        job.matching_ms = (time.perf_counter() - matching_started) * 1000
+        if not runnable:
+            await self._fail_unreserved(
+                job,
+                binding_failures[0] if binding_failures else "operation binding missing",
+            )
+            return
+
+        reservation_started = time.perf_counter()
+        selected_resource_id = await self.reservations.select_and_reserve(
+            offer.owner_asset_id for offer, _ in runnable
+        )
+        job.reservation_ms = (time.perf_counter() - reservation_started) * 1000
+        if selected_resource_id is None:
+            await self._fail_unreserved(job, "reservation conflict")
+            return
+
+        offer, binding = select_candidate(runnable, selected_resource_id)
+        job.selected_resource_id = selected_resource_id
+        execution = ActiveExecution(job=job, binding=binding)
+        self.active_jobs_by_request_id[job.job_id] = execution
+        print(
+            f"[ORCHESTRATOR] Selected resource={selected_resource_id} "
+            f"capability={job.required_capability_semantic} "
+            f"skill={offer.skill_ref.id_short_path} "
+            f"operation={binding.operation_ref.id_short_path}"
+        )
+
+        invocation_started = time.perf_counter()
+        try:
+            response = await invoke_operation(
+                binding,
+                {
+                    SOURCE_TRANSFER_LOCATION: job.source_id,
+                    TARGET_TRANSFER_LOCATION: job.target_id,
+                },
+                client=self.http_client,
+                retry_count=self.config.invoke_retry_count,
+                requested_timeout_ms=int(
+                    self.config.http_timeout_seconds * 1000
+                ),
+                metadata_arguments={
+                    "requestId": job.job_id,
+                    "runId": self.run_id,
+                },
+            )
+        except Exception as exc:
+            job.invocation_ms = (time.perf_counter() - invocation_started) * 1000
+            await self._finish_execution(
+                execution, "failed", f"HTTP invocation failure: {exc}"
+            )
+            return
+        job.invocation_ms = (time.perf_counter() - invocation_started) * 1000
+
+        # A very fast completion reply can finish the job while POST /invoke is
+        # still returning. Do not recreate its lifecycle in that case.
+        if job.job_id not in self.active_jobs_by_request_id:
+            return
+        if response is None:
+            await self._finish_execution(
+                execution, "failed", "HTTP invocation produced no response"
+            )
+            return
+        if response.status_code >= 400:
+            await self._finish_execution(
+                execution,
+                "failed",
+                f"HTTP invocation returned {response.status_code}",
+            )
+            return
+        execution.timeout_task = asyncio.create_task(
+            self._expire_operation(job.job_id)
+        )
+
+    async def _expire_operation(self, request_id: str) -> None:
+        await asyncio.sleep(self.config.operation_timeout_seconds)
+        execution = self.active_jobs_by_request_id.get(request_id)
+        if execution is not None:
+            await self._finish_execution(
+                execution,
+                "failed",
+                f"operation timeout after {self.config.operation_timeout_seconds:.1f}s",
+            )
 
     async def handle_operation_ack(self, payload: str) -> None:
-        robot_key = await self.lifecycle.handle_ack(payload)
-        if robot_key:
-            await self._schedule_next_for_robot(robot_key)
-
-    def _station_is_ready(self, station_id: str) -> bool:
-        station_key = normalize_station_id(station_id)
-        status = self.station_statuses.get(station_key, {})
-        return (
-            self.server_online
-            and bool(self.server_instance_id)
-            and status.get("serverInstanceId") == self.server_instance_id
-            and status.get("online") is True
-            and status.get("robotReady") is True
-        )
-
-    async def _queue_station_pending_job(self, job: dict) -> None:
-        request_id = str(job["request_id"])
-        if time.monotonic() >= float(job["deadline"]):
-            await self._log_request_status(job, "timeout")
-            self.active_jobs.discard(job["token"])
-            return
-        if request_id in self.pending_request_ids:
-            return
-
-        station_key = normalize_station_id(job.get("station_id") or "")
-        job["pending_station_key"] = station_key
-        self.pending_request_ids.add(request_id)
-        self.active_jobs.add(job["token"])
-        self.pending_by_station[station_key].append(job)
-        self.pending_timeout_tasks[request_id] = asyncio.create_task(
-            self._expire_pending_job(job)
-        )
-        print(
-            f"[ORCHESTRATOR] Queued request {request_id} for station "
-            f"{station_key}; waiting for server and robot readiness"
-        )
-
-    async def _drain_station_pending(self, station_id: str) -> None:
-        station_key = normalize_station_id(station_id)
-        if not self._station_is_ready(station_key):
-            return
-        queue = self.pending_by_station.get(station_key)
-        while queue:
-            job = queue[0]
-            self._remove_pending_job(job)
-            self._cancel_pending_timeout(str(job["request_id"]))
-            await self.job_queue.put(job)
-
-    async def _handle_station_unavailable(self, station_id: str) -> None:
-        station_key = normalize_station_id(station_id)
-
-        queued_jobs = []
-        for queue in self.pending_by_robot.values():
-            queued_jobs.extend(
-                job
-                for job in list(queue)
-                if normalize_station_id(job.get("station_id") or "") == station_key
-            )
-        queued_jobs.extend(
-            job
-            for job in list(self.pending_unassigned)
-            if normalize_station_id(job.get("station_id") or "") == station_key
-        )
-        for job in queued_jobs:
-            self._remove_pending_job(job)
-            self._cancel_pending_timeout(str(job["request_id"]))
-            await self._queue_station_pending_job(job)
-
-        for lifecycle in list(self.station_lifecycles.get(station_key, [])):
-            operation_started = bool(lifecycle.get("operation_started"))
-            request_id = lifecycle.get("request_id")
-            robot_key = await self.lifecycle.release(
-                lifecycle,
-                "station became unavailable",
-            )
-            if operation_started:
-                print(
-                    f"[ORCHESTRATOR] Request {request_id} was interrupted after "
-                    "operation start; state is unknown and it will not be retried"
-                )
-            else:
-                lifecycle["deadline"] = (
-                    time.monotonic() + self.config.queue_timeout_seconds
-                )
-                await self._queue_station_pending_job(lifecycle)
-            if robot_key:
-                await self._schedule_next_for_robot(robot_key)
-
-    async def handle_server_status(self, payload: str) -> None:
         try:
-            status = json.loads(payload)
+            acknowledgement = json.loads(payload)
         except json.JSONDecodeError:
-            print(f"[ORCHESTRATOR] Ignored malformed server status: {payload!r}")
+            print(f"[ORCHESTRATOR] Ignored malformed operation reply: {payload!r}")
             return
-        if not isinstance(status, dict) or not isinstance(status.get("online"), bool):
+        if not isinstance(acknowledgement, dict):
             return
-
-        instance_id = str(status.get("serverInstanceId") or "").strip()
-        if not instance_id:
-            return
-        if (
-            status["online"] is False
-            and self.server_instance_id
-            and instance_id != self.server_instance_id
-        ):
+        request_id = str(acknowledgement.get("requestId") or "").strip()
+        execution = self.active_jobs_by_request_id.get(request_id)
+        if execution is None:
+            print(
+                f"[ORCHESTRATOR] Ignored operation reply for unknown request {request_id or '<missing>'}"
+            )
             return
 
-        known_stations = set(self.station_statuses)
-        previously_ready = {
-            station_id: self._station_is_ready(station_id)
-            for station_id in known_stations
-        }
-        self.server_online = status["online"]
-        self.server_instance_id = instance_id
-
-        for station_id in known_stations:
-            ready = self._station_is_ready(station_id)
-            if previously_ready[station_id] and not ready:
-                await self._handle_station_unavailable(station_id)
-            elif not previously_ready[station_id] and ready:
-                await self._drain_station_pending(station_id)
-
-    async def handle_station_status(self, topic: str, payload: str) -> None:
-        try:
-            status = json.loads(payload)
-        except json.JSONDecodeError:
-            print(f"[ORCHESTRATOR] Ignored malformed station status: {payload!r}")
+        status = str(acknowledgement.get("status") or "").strip().lower()
+        if not status and isinstance(acknowledgement.get("success"), bool):
+            status = "completed" if acknowledgement["success"] else "failed"
+        if status in {"started", "running", "accepted"}:
+            execution.operation_started = True
             return
-        if not isinstance(status, dict):
+        if status in {"completed", "complete", "succeeded", "success"}:
+            await self._finish_execution(execution, "completed")
             return
-
-        topic_parts = topic.split("/")
-        station_id = str(status.get("stationId") or topic_parts[1]).strip()
-        station_key = normalize_station_id(station_id)
-        if (
-            not station_key
-            or not isinstance(status.get("online"), bool)
-            or not isinstance(status.get("robotReady"), bool)
-            or not str(status.get("serverInstanceId") or "").strip()
-        ):
+        if status in {"failed", "fault", "faulted", "error"}:
+            await self._finish_execution(
+                execution,
+                "failed",
+                str(
+                    acknowledgement.get("error")
+                    or acknowledgement.get("message")
+                    or "controller fault reply"
+                ),
+            )
             return
-
-        previously_ready = self._station_is_ready(station_key)
-        self.station_statuses[station_key] = status
-        ready = self._station_is_ready(station_key)
-        if previously_ready and not ready:
-            await self._handle_station_unavailable(station_key)
-        elif not previously_ready and ready:
-            await self._drain_station_pending(station_key)
-
-    def _cancel_pending_timeout(self, request_id: str) -> None:
-        timeout_task = self.pending_timeout_tasks.pop(request_id, None)
-        if timeout_task and timeout_task is not asyncio.current_task():
-            timeout_task.cancel()
-
-    def _remove_pending_job(self, job: dict) -> None:
-        request_id = str(job.get("request_id") or "")
-        station_key = job.get("pending_station_key")
-        robot_key = job.get("pending_robot_key")
-        if station_key:
-            queue = self.pending_by_station.get(station_key)
-            if queue and job in queue:
-                queue.remove(job)
-            if queue is not None and not queue:
-                self.pending_by_station.pop(station_key, None)
-        elif robot_key:
-            queue = self.pending_by_robot.get(robot_key)
-            if queue and job in queue:
-                queue.remove(job)
-            if queue is not None and not queue:
-                self.pending_by_robot.pop(robot_key, None)
-        elif job in self.pending_unassigned:
-            self.pending_unassigned.remove(job)
-        self.pending_request_ids.discard(request_id)
-        job.pop("pending_station_key", None)
-        job.pop("pending_robot_key", None)
-
-    async def _expire_pending_job(self, job: dict) -> None:
-        request_id = str(job["request_id"])
-        delay = max(0.0, float(job["deadline"]) - time.monotonic())
-        try:
-            await asyncio.sleep(delay)
-        except asyncio.CancelledError:
-            return
-        if request_id not in self.pending_request_ids:
-            return
-        self._remove_pending_job(job)
-        self.pending_timeout_tasks.pop(request_id, None)
         print(
-            f"[ORCHESTRATOR] Queued job for {job['sensor']} timed out after "
-            f"{self.config.queue_timeout_seconds:.1f}s"
+            f"[ORCHESTRATOR] Ignored operation reply with unsupported status: {acknowledgement}"
         )
-        await self._log_request_status(job, "timeout")
-        self.active_jobs.discard(job["token"])
 
-    async def _queue_pending_job(
+    async def _finish_execution(
         self,
-        job: dict,
-        candidates: list[dict],
-        robot_key: Optional[str] = None,
+        execution: ActiveExecution,
+        result: str,
+        failure_reason: str = "",
     ) -> None:
-        request_id = str(job["request_id"])
-        if time.monotonic() >= float(job["deadline"]):
-            await self._log_request_status(job, "timeout")
-            self.active_jobs.discard(job["token"])
+        job = execution.job
+        current = self.active_jobs_by_request_id.get(job.job_id)
+        if current is not execution:
             return
-        if request_id in self.pending_request_ids:
-            return
-
-        job["candidate_by_robot"] = {
-            candidate["robot"].state_submodel_b64: candidate
-            for candidate in candidates
-        }
-        job["pending_robot_key"] = robot_key
-        self.pending_request_ids.add(request_id)
-        if robot_key:
-            self.pending_by_robot[robot_key].append(job)
-            print(
-                f"[ORCHESTRATOR] Queued request {request_id} for busy "
-                f"robot {robot_key}"
-            )
-        else:
-            self.pending_unassigned.append(job)
-            print(
-                f"[ORCHESTRATOR] Queued request {request_id} without a robot; "
-                "waiting for a capable robot to become available"
-            )
-        self.pending_timeout_tasks[request_id] = asyncio.create_task(
-            self._expire_pending_job(job)
-        )
-
-    async def _schedule_next_for_robot(self, robot_key: str) -> None:
-        assigned_queue = self.pending_by_robot.get(robot_key)
-        if assigned_queue:
-            job = assigned_queue[0]
-            candidate = job.get("candidate_by_robot", {}).get(robot_key)
-            if candidate is not None:
-                self._remove_pending_job(job)
-                self._cancel_pending_timeout(str(job["request_id"]))
-                await self._dispatch_to_robot(job, candidate)
-                return
-
-        for job in list(self.pending_unassigned):
-            candidate = job.get("candidate_by_robot", {}).get(robot_key)
-            if candidate is None:
-                continue
-            self._remove_pending_job(job)
-            self._cancel_pending_timeout(str(job["request_id"]))
-            await self._dispatch_to_robot(job, candidate)
-            return
-
-    async def _dispatch_to_robot(self, job: dict, candidate: dict) -> None:
-        if not self._station_is_ready(job.get("station_id") or ""):
-            await self._queue_station_pending_job(job)
-            return
-
-        robot = candidate["robot"]
-        selected_route = candidate["route"]
-        robot_key = robot.state_submodel_b64
-        robot_id = robot.skills_submodel_b64
-        if robot_key in self.reserved_robots:
-            await self._queue_pending_job(job, [candidate], robot_key)
-            return
-
-        operation_inputs = build_operation_inputs(selected_route)
-        input_arguments = [
-            {
-                "value": {
-                    "modelType": "Property",
-                    "idShort": id_short,
-                    "valueType": details["valueType"],
-                    "value": details["value"],
-                }
-            }
-            for id_short, details in operation_inputs.items()
-        ]
-        request_id = str(job["request_id"])
-        input_arguments.append({
-            "value": {
-                "modelType": "Property",
-                "idShort": "requestId",
-                "valueType": "xs:string",
-                "value": request_id,
-            }
-        })
-        input_arguments.append({
-            "value": {
-                "modelType": "Property",
-                "idShort": "runId",
-                "valueType": "xs:string",
-                "value": job["run_id"],
-            }
-        })
-        body = {
-            "inputArguments": input_arguments,
-            "inoutputArguments": [],
-            "requestedTimeout": int(self.config.http_timeout_seconds * 1000),
-        }
-        selected_station_id = selected_route["StationId"]
-        target_op = selected_route["TargetOperation"]
-        skills_url = (
-            f"{self.config.basyx_base_url}/submodels/"
-            f"{robot.skills_submodel_b64}"
-        )
-        dispatch_payload = {
-            "token": job.get("token"),
-            "station_id": selected_station_id,
-            "source_position": selected_route["SourcePosition"],
-            "target_position": selected_route["TargetPosition"],
-            "sensor": job["sensor"],
-            "sensor_key": job.get("sensor_key"),
-            "sensor_clear": bool(job.get("sensor_clear")),
-            "t1_ms": job.get("t1_ms"),
-            "t2_ms": int(time.time() * 1000),
-            "run_id": job.get("run_id"),
-            "robot_skills_submodel_b64": robot.skills_submodel_b64,
-            "robot_key": robot_key,
-            "target_operation": target_op,
-            "selected_route": selected_route["route_id"],
-            "operation_inputs": {
-                id_short: details["value"]
-                for id_short, details in operation_inputs.items()
-            },
-            "invoke_url": f"{skills_url}/submodel-elements/{target_op}/invoke",
-            "body": body,
-            "request_id": request_id,
-            "deadline": job.get("deadline"),
-            "required_operation": job.get("required_operation"),
-        }
-
-        self.reserved_robots.add(robot_key)
-        try:
-            await self.dispatch_queue.put(dispatch_payload)
-        except BaseException:
-            self.reserved_robots.discard(robot_key)
-            raise
+        self.active_jobs_by_request_id.pop(job.job_id, None)
+        if (
+            execution.timeout_task is not None
+            and execution.timeout_task is not asyncio.current_task()
+        ):
+            execution.timeout_task.cancel()
+        if job.selected_resource_id:
+            await self.reservations.release(job.selected_resource_id)
+        await self.metrics.record(job, result, failure_reason)
         print(
-            f"[ORCHESTRATOR] Reserved robot {robot_id} as {robot_key}; "
-            f"queued operation={target_op} inputs={dispatch_payload['operation_inputs']}"
+            f"[ORCHESTRATOR] Job {job.job_id} {result}; "
+            f"resource={job.selected_resource_id or '<none>'} "
+            f"reason={failure_reason or '<none>'}"
         )
-
-
-    async def process_factory_job(self, job: dict) -> None:
-        job.setdefault("request_id", str(uuid.uuid4()))
-        job.setdefault("run_id", self.run_id)
-        job.setdefault("token", job["request_id"])
-        job.setdefault(
-            "sensor_clear",
-            self.sensor_states.get(job.get("sensor_key")) is False,
-        )
-        triggering_sensor = job["sensor"]
-        job_station_id = job.get("station_id") or ""
-        required_operation = str(
-            job.get("required_operation") or job.get("target_operation") or ""
-        ).strip()
-        client = self.http_client
-
-        job.setdefault(
-            "deadline",
-            time.monotonic() + self.config.queue_timeout_seconds,
-        )
-
-        if not self._station_is_ready(job_station_id):
-            await self._queue_station_pending_job(job)
-            return
-
-        capable_candidates = []
-        for robot in self.robots:
-            robot_id = robot.skills_submodel_b64
-            skills_url = f"{self.config.basyx_base_url}/submodels/{robot.skills_submodel_b64}"
-            routes = await fetch_supported_capabilities(
-                client,
-                skills_url,
-                robot.skills_submodel_b64,
-            )
-            if routes is None:
-                continue
-
-            selected_route = match_capability_route(
-                routes,
-                robot_id=robot_id,
-                station_id=job_station_id,
-                triggering_sensor=triggering_sensor,
-                required_operation=required_operation,
-            )
-            if selected_route is None:
-                continue
-            candidate = {"robot": robot, "route": selected_route}
-            state_url = (
-                f"{self.config.basyx_base_url}/submodels/"
-                f"{robot.state_submodel_b64}"
-            )
-            fault_active = await read_robot_bool_state(
-                client, state_url, "FaultActive"
-            )
-            await self._publish_robot_fault_state(robot, fault_active)
-            if fault_active is not False:
-                print(
-                    f"[ORCHESTRATOR] Rejected robot {robot_id}: "
-                    f"FaultActive is {fault_active!r}, expected False"
-                )
-                continue
-            moving = await read_robot_bool_state(client, state_url, "IsMoving")
-            if moving is None:
-                print(
-                    f"[ORCHESTRATOR] Rejected robot {robot_id}: "
-                    "IsMoving could not be read"
-                )
-                continue
-            candidate["moving"] = moving
-            capable_candidates.append(candidate)
-
-            if moving is False and robot.state_submodel_b64 not in self.reserved_robots:
-                print(
-                    f"[ORCHESTRATOR] Selected route {selected_route['route_id'] or '<unnamed>'} "
-                    f"on robot {robot_id}: station={selected_route['StationId']} "
-                    f"source={selected_route['SourcePosition'] or 'n/a'} "
-                    f"target={selected_route['TargetPosition'] or 'n/a'} "
-                    f"operation={selected_route['TargetOperation']}"
-                )
-                await self._dispatch_to_robot(job, candidate)
-                return
-
-        if len(capable_candidates) == 1:
-            robot_key = capable_candidates[0]["robot"].state_submodel_b64
-            await self._queue_pending_job(
-                job,
-                capable_candidates,
-                robot_key,
-            )
-            return
-
-        await self._queue_pending_job(job, capable_candidates)
-
-    async def dispatch_factory_job(self, dispatch_job: dict) -> None:
-        try:
-            await self._dispatch_factory_job(dispatch_job)
-        except asyncio.CancelledError:
-            await self._log_request_status(dispatch_job, "failed")
-            await self._release_dispatch_job(dispatch_job, "dispatch cancelled")
-            raise
-        except Exception as exc:
-            await self._log_request_status(dispatch_job, "failed")
-            await self._release_dispatch_job(
-                dispatch_job,
-                f"dispatch exception: {exc}",
-            )
-            raise
-
-    async def _dispatch_factory_job(self, dispatch_job: dict) -> None:
-        if not self._station_is_ready(dispatch_job.get("station_id") or ""):
-            self.reserved_robots.discard(dispatch_job.get("robot_key"))
-            await self._queue_station_pending_job(dispatch_job)
-            return
-
-        print(
-            "[ORCHESTRATOR] Dispatching "
-            f"operation={dispatch_job.get('target_operation')} "
-            f"robot={dispatch_job.get('robot_skills_submodel_b64')} "
-            f"route={dispatch_job.get('selected_route') or 'unknown'} "
-            f"inputs={dispatch_job.get('operation_inputs', {})}"
-        )
-
-        lifecycle = await self.lifecycle.begin_dispatch(dispatch_job)
-        if lifecycle is None:
-            await self._log_request_status(dispatch_job, "failed")
-            return
-
-        t3_ms = int(time.time() * 1000)
-        dispatch_job["t3_ms"] = t3_ms
-        response = await invoke_operation(
-            self.http_client,
-            dispatch_job["invoke_url"],
-            dispatch_job["body"],
-            self.config.invoke_retry_count,
-        )
-
-        if response is None:
-            await self._log_request_status(dispatch_job, "failed")
-            await self._release_dispatch_job(dispatch_job, "operation invocation produced no response")
-            return
-
-
-        await self._log_request_status(
-            dispatch_job,
-            "ok" if response.status_code < 400 else "failed",
-        )
-
-        if response.status_code < 400:
-            await self.lifecycle.try_finalize(lifecycle)
-        else:
-            await self._release_dispatch_job(
-                dispatch_job,
-                f"operation invocation returned HTTP {response.status_code}",
-            )

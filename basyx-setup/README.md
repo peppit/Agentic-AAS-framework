@@ -9,8 +9,8 @@ Prerequisite: Docker Desktop (or Docker Engine with Compose plugin) is installed
 
 ### Primary command path
 
-The central orchestration agent receives station events, matches the requested
-job against robot capabilities described in AAS submodels, reserves the
+The central orchestration agent receives semantic AAS state events, resolves a
+ProcessRequirement, matches it against capabilities described in AAS submodels, reserves the
 selected robot, and invokes its AAS Operation. The operation-delegation service
 translates the AAS invocation into the controller-facing MQTT command.
 Completion and fault messages are correlated with the lifecycle using the
@@ -153,14 +153,20 @@ The python-agent listens to AAS submodel update events and dispatches robot oper
 
 Current behavior:
 
-1. Subscribes to AAS update events and correlated operation replies on `simulation/+/replies/+`.
-2. Processes boolean sensor properties whose idShort contains Present or Clear.
-3. Enqueues a job on valid detection and routes it to a robot by matching TriggerSensor -> TargetOperation in SupportedCapabilities.
-4. Latches runtime state by station and correlates commands with their `requestId`.
-5. Rearms a station only after its operation reports `completed` and its sensor reports `false`.
-6. Polls `IsMoving` as a diagnostic/compatibility monitor.
-7. Publishes retained robot fault-state transitions to
-   `factory/robots/<robotId>/fault` for external subscribers.
+1. Discovers AAS and Submodel descriptors from both Registries and builds an
+   atomic `SemanticCatalog` snapshot.
+2. Interprets boolean state updates through the discovered element
+   `semanticId`; idShort is only an address within the Submodel.
+3. Resolves `(trigger globalAssetId, trigger semanticId)` to a
+   `ProcessRequirement`, then performs exact capability, reachability, cached
+   state, and atomic reservation filtering.
+4. Resolves capability -> Skill -> Operation and maps source/target arguments
+   using Operation-variable semantics before invoking BaSyx `/invoke`.
+5. Correlates completion by `requestId`, releases the selected resource, and
+   rearms a trigger only after its semantic state becomes false.
+6. Rebuilds the catalog every `REGISTRY_REFRESH_SECONDS` and swaps the complete
+   snapshot atomically, so newly registered compatible resources require no
+   python-agent restart or configuration entry.
 
 The simulation publishes robot fault telemetry on
 `factory/robots/<robotId>/telemetry/faultActive`. The robot ID is resolved
@@ -172,19 +178,21 @@ Conveyor telemetry is similarly asset-scoped under
 
 Key python-agent environment variables (see [docker-compose.yml](docker-compose.yml)):
 
-1. BASYX_BASE_URL
-2. MQTT_HOST / MQTT_PORT / MQTT_TOPIC / OPERATION_REPLY_TOPIC /
-   ROBOT_FAULT_TOPIC_PREFIX
-3. STATION_REGISTRY_FILE
-4. JOB_TIMEOUT_SECONDS / INVOKE_RETRY_COUNT
+1. `AAS_REGISTRY_URL` / `SUBMODEL_REGISTRY_URL` /
+   `REGISTRY_REFRESH_SECONDS`
+2. `MQTT_HOST` / `MQTT_PORT` / `MQTT_TOPIC` /
+   `OPERATION_REPLY_TOPIC`
+3. `HTTP_TIMEOUT_SECONDS` / `OPERATION_TIMEOUT_SECONDS` /
+   `INVOKE_RETRY_COUNT`
+4. `ORCHESTRATOR_LOG_CSV_PATH` / `MEASUREMENT_RUN_ID`
 
-The registry variable points to the shared `stations.json` file in the default
-Compose setup.
+The python-agent has no `BASYX_BASE_URL` or `STATION_REGISTRY_FILE`: all AAS
+repository endpoints come from Registry descriptors.
 
 ## Asset Registry
 
-[stations.json](stations.json) is the canonical bootstrap registry used by the
-telemetry bridge, MQTT operation bridge, and orchestrator. Schema version 2
+[stations.json](stations.json) is a legacy integration registry used by the
+telemetry bridge and optional MQTT operation bridge. Schema version 2
 separates `stations`, `robots`, and `conveyors`. The `stationAssets` list links
 robots and conveyors to their physical stations using only `stationId`,
 `assetType`, and `assetId`. Robot-to-station operation eligibility is separate:
@@ -197,16 +205,43 @@ To add assets:
 3. Add each conveyor once below `conveyors`, with its state and operations
    submodel IDs.
 4. Link each robot and conveyor to its physical station in `stationAssets`.
-5. Add `SupportedCapabilities` routes to make a robot eligible for one or more
-   stations. Several robots may declare routes for the same station.
+5. Model Offered capabilities, CapabilityRealizedBy, CanReach, and
+   SkillInvokedByOperation in each resource AAS.
 6. Add or upload the corresponding AASX packages and map the assets in OIP.
-7. Restart `mqtt-aas-bridge` and `python-agent`, which cache bootstrap data. Restart
-   `mqtt-operation-bridge` as well only when the `mqtt-first` profile is in use.
+7. Restart legacy bridges only when their adapter mappings change. The
+   python-agent discovers compatible AAS resources on its next refresh.
 
 `server.py` currently represents one simulated robot and conveyor controller
 per station. The separated registry and telemetry paths support independently
 identified assets, while simulating several physical controllers inside one
 station requires a corresponding OIP scene/controller model.
+
+### Dynamic Robot02 onboarding check
+
+1. Start the stack with Factory, Conveyor01, and Robot01 registered.
+2. Upload/register a Robot02 AAS while python-agent remains running. Robot02
+   must offer the same Transport semantic, relate it to a Skill, declare
+   CanReach relationships to Conveyor01 and Pallet01, bind the Skill to an
+   Operation, and expose semantic source/target input variables.
+3. Wait one `REGISTRY_REFRESH_SECONDS` interval and check for
+   `semantic resource added: globalAssetId=... offeredCapabilities=[...]` in
+   `docker compose logs python-agent`.
+4. Make Robot01 busy/unavailable or otherwise apply the stable-first policy,
+   then produce the next false -> true WorkpiecePresent transition. Robot02 is
+   selected without editing `stations.json`, changing Python, adding an agent,
+   or restarting python-agent.
+
+Phase 2 semantic scheduling is station-independent. Raw OIP telemetry-to-AAS
+translation still uses `stations.json` in `mqtt-aas-bridge`; that adapter-only
+legacy is reserved for Phase 3.
+
+The current Java operation-delegation/device adapter also retains its legacy
+MoveBox input contract (`SourcePosition` and `TargetPosition`) and may require
+translation from canonical AAS identities to local simulation node names.
+Python does not perform that translation: it maps canonical source/target IDs
+to the actual semantically declared Operation variables and calls BaSyx
+`/invoke`. Any local-name compatibility therefore remains below the AAS
+Operation boundary.
 
 ## Include Your Own Asset Administration Shells
 

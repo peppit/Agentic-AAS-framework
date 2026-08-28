@@ -205,11 +205,9 @@ services:
       dockerfile: Dockerfile
     container_name: python-agent
     environment:
-      - BASYX_BASE_URL=http://aas-env:8081
       - MQTT_HOST=mosquitto
       - MQTT_PORT=1883
       - MQTT_TOPIC=sm-repository/+/submodels/+/submodelElements/+/updated
-      - ROBOT_FAULT_TOPIC_PREFIX=${ROBOT_FAULT_TOPIC_PREFIX:-factory/robots}
       - OPERATION_REPLY_TOPIC=simulation/+/replies/+
       - HTTP_TIMEOUT_SECONDS=8
       - QUEUE_TIMEOUT_SECONDS=${QUEUE_TIMEOUT_SECONDS:-60}
@@ -218,15 +216,10 @@ services:
       - SUBMODEL_REGISTRY_URL=http://sm-registry:8080
       - REGISTRY_REFRESH_SECONDS=5
       - SEMANTIC_DISCOVERY_DIAGNOSTIC=true
-      - STATION_REGISTRY_FILE=/config/stations.json
       - ORCHESTRATOR_LOG_CSV_PATH=/app/orchestrator_logs.csv
-      - ORCHESTRATOR_SUMMARY_CSV_PATH=/app/orchestrator_summary.csv
-      - SUMMARY_BATCH_SIZE=5
       - MEASUREMENT_RUN_ID=${MEASUREMENT_RUN_ID:-}
     volumes:
       - ../orchestrator_logs.csv:/app/orchestrator_logs.csv
-      - ../orchestrator_summary.csv:/app/orchestrator_summary.csv
-      - ./stations.json:/config/stations.json:ro
 
     restart: always
     depends_on:

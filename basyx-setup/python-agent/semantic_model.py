@@ -1,5 +1,6 @@
-"""Typed semantic inventory records used by the Phase 1 catalog."""
+"""Typed semantic inventory and runtime records."""
 
+import time
 from dataclasses import dataclass, field
 
 
@@ -64,6 +65,26 @@ class ProcessRequirement:
     required_capability_semantics: set[str]
     source_id: str | None
     target_id: str | None
+
+
+@dataclass
+class ProcessJob:
+    job_id: str
+    requirement_ref: ElementRef
+    trigger_asset_id: str
+    trigger_semantic_id: str
+    required_capability_semantic: str
+    source_id: str
+    target_id: str
+    created_at: float = field(default_factory=time.monotonic)
+    received_at_ms: int | None = None
+    selected_resource_id: str | None = None
+    candidate_count: int = 0
+    reachable_candidate_count: int = 0
+    available_candidate_count: int = 0
+    matching_ms: float = 0.0
+    reservation_ms: float = 0.0
+    invocation_ms: float = 0.0
 
 
 @dataclass
