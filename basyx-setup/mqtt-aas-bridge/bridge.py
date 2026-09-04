@@ -91,6 +91,43 @@ def descriptor_endpoint(descriptor: object) -> str:
     return fallback
 
 
+def shell_submodel_ids(shell: object) -> list[str]:
+    """Extract Submodel IDs from an AAS model's ModelReferences."""
+
+    if not isinstance(shell, dict):
+        return []
+
+    references = shell.get("submodels", [])
+    if not isinstance(references, list):
+        return []
+
+    identifiers: list[str] = []
+
+    for reference in references:
+        if not isinstance(reference, dict):
+            continue
+
+        keys = reference.get("keys", [])
+        if not isinstance(keys, list):
+            continue
+
+        identifier = next(
+            (
+                str(key.get("value") or "").strip()
+                for key in keys
+                if isinstance(key, dict)
+                and str(key.get("type") or "").lower() == "submodel"
+                and str(key.get("value") or "").strip()
+            ),
+            "",
+        )
+
+        if identifier:
+            identifiers.append(identifier)
+
+    return identifiers
+
+
 def _reference_values(reference: object) -> set[str]:
     if not isinstance(reference, dict):
         return set()
@@ -246,17 +283,37 @@ class SemanticRegistry:
         return result
 
     async def _associated_submodels(self, descriptor: dict) -> list[dict]:
+        # First use inline descriptors when the Registry provides them.
         associated = descriptor.get("submodelDescriptors", [])
         if isinstance(associated, list) and associated:
             return [item for item in associated if isinstance(item, dict)]
+
         aas_id = str(descriptor.get("id") or "").strip()
         if not aas_id:
             return []
+
         url = (
             f"{self.config.aas_registry_url.rstrip('/')}/shell-descriptors/"
             f"{encode_identifier(aas_id)}/submodel-descriptors"
         )
-        return await self._all(url)
+        associated = await self._all(url)
+
+        if associated:
+            return associated
+
+        aas_endpoint = descriptor_endpoint(descriptor)
+        if not aas_endpoint:
+            raise RegistryError(
+                f"AAS descriptor {aas_id!r} has no endpoint for "
+                "Submodel-reference discovery"
+            )
+
+        shell = await self._get_json(aas_endpoint)
+
+        return [
+            {"id": submodel_id}
+            for submodel_id in shell_submodel_ids(shell)
+        ]
 
     async def discover(self) -> tuple[dict[tuple[str, str], SignalBinding], list[str]]:
         aas_url = f"{self.config.aas_registry_url.rstrip('/')}/shell-descriptors"
