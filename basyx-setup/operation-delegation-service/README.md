@@ -1,237 +1,180 @@
-# OPC UA Operation Delegation Service
+# Simulation operation-delegation service
 
-Spring Boot service that implements BaSyx Operation Delegation pattern to bridge AAS operations to OPC UA crane controls.
+This Spring Boot service implements the device-facing side of BaSyx Operation
+Delegation. It accepts delegated HTTP POST requests and publishes MQTT commands
+for the OIP simulation. It does not connect to OPC UA and does not wait for
+controller completion.
 
-## Overview
+## Flow
 
-This service acts as the **delegated operation handler** for BaSyx AAS operations. When an operation is invoked in the AAS Web UI or via API, BaSyx forwards the request to this service via HTTP, which then executes the corresponding OPC UA write operation.
-
-## Architecture
-
-```
-AAS Web UI → BaSyx Environment → Operation Delegation → This Service → OPC UA Server
-```
-
-### How It Works
-
-1. **AAS Operation Definition**: Operations in the AASX file have a `Qualifier` with:
-   - `type`: `"invocationDelegation"`
-   - `value`: `"http://operation-delegation-service:8087/crane/hoist-down"` (service URL)
-
-2. **BaSyx Delegation**: When operation is invoked, BaSyx checks for the delegation qualifier and forwards the request
-
-3. **This Service**: Receives the HTTP POST request and translates it to OPC UA write operations
-
-4. **OPC UA**: Writes boolean pulse (true → 10 seconds → false) to crane control nodes
-
-## Supported Operations
-
-| Operation | Endpoint | OPC UA Node |
-|-----------|----------|-------------|
-| Hoist_Down | `/crane/hoist-down` | `ns=7;s=DX_Custom_V.Controls.Hoist.Down` |
-| Hoist_Up | `/crane/hoist-up` | `ns=7;s=DX_Custom_V.Controls.Hoist.Up` |
-| Trolley_Forward | `/crane/trolley-forward` | `ns=7;s=DX_Custom_V.Controls.Trolley.Forward` |
-| Trolley_Backward | `/crane/trolley-backward` | `ns=7;s=DX_Custom_V.Controls.Trolley.Backward` |
-| Bridge_Forward | `/crane/bridge-forward` | `ns=7;s=DX_Custom_V.Controls.Bridge.Forward` |
-| Bridge_Backward | `/crane/bridge-backward` | `ns=7;s=DX_Custom_V.Controls.Bridge.Backward` |
-| DriveToTarget | `/crane/drive-to-target` | `Target.Bridge`, `Target.Trolley`, `Target.Hoist`, `DriveToTarget.Execute` |
-
-## Configuration
-
-Edit `src/main/resources/application.yml`:
-
-```yaml
-opcua:
-  endpoint: opc.tcp://host.docker.internal:4840  # OPC UA server address
+```text
+BaSyx AAS Operation -> HTTP POST -> this service -> MQTT -> OIP controller
 ```
 
-**Note**: `host.docker.internal` is used to access the host machine from inside Docker.
+The service runs on port `8087`. In an AAS `invocationDelegation` qualifier,
+address it as `http://operation-delegation-service:8087`; from the host, use
+`http://localhost:8087`.
 
-## Building
+## Endpoints and topics
 
-### Standalone JAR
-```bash
-mvn clean package
-java -jar target/operation-delegation-service-1.0.0.jar
-```
+| POST endpoint | Published topic | Payload |
+|---|---|---|
+| `/simulation/stations/{stationId}/conveyorbelt/run` | `simulation/{stationId}/operations/conveyorRunning` | `{"requestId":"...","value":true}` |
+| `/simulation/stations/{stationId}/conveyorbelt/speed` | `simulation/{stationId}/operations/conveyorSpeed` | `{"requestId":"...","value":55.0}` |
+| `/simulation/robots/{robotId}/movebox` | `simulation/robots/{robotId}/operations/moveBox` | Structured payload described below |
+| `/simulation/stations/{stationId}/robot/move-to-home` | `simulation/{stationId}/operations/MoveToHome` | `{"requestId":"...","value":true}` |
 
-### Docker Image
-```bash
-docker build -t operation-delegation-service:1.0.0 .
-```
+Path values are sanitized before use as MQTT topic segments: `/`, `+`, and `#`
+become `_`; a blank value becomes `unknown`.
 
-## Running
+## MoveBox
 
-### With Docker Compose (Recommended)
-The service is already configured in the main `docker-compose.yml`:
+The preferred inputs are AAS Operation variables with semantic IDs:
 
-```yaml
-operation-delegation-service:
-  build:
-    context: ./operation-delegation-service
-  container_name: operation-delegation-service
-  ports:
-    - '8087:8087'
-  restart: always
-```
+- `urn:agent-aas:semantics:SourceTransferLocation:1`
+- `urn:agent-aas:semantics:TargetTransferLocation:1`
 
-Start with:
+The variable `idShort` values are not significant when those semantics are
+present. For compatibility, variables or `params` named `SourcePosition` and
+`TargetPosition` are also accepted.
 
-```powershell
-cd ../  # Go to basyx-setup root
-docker compose up -d
-```
-
-### Standalone
-
-```bash
-mvn spring-boot:run
-```
-
-## API Examples
-
-### Invoke Hoist_Down (default 10s duration)
-```bash
-curl -X POST http://localhost:8087/crane/hoist-down \
-  -H "Content-Type: application/json"
-```
-
-### Invoke DriveToTarget with parameters
-```bash
-curl -X POST http://localhost:8087/crane/drive-to-target \
-  -H "Content-Type: application/json" \
-  -d '[
-    {"value":{"idShort":"Bridge","value":"200.0"}},
-    {"value":{"idShort":"Trolley","value":"50.0"}},
-    {"value":{"idShort":"Hoist","value":"12.5"}}
-  ]'
-```
-
-### Invoke Robot MoveBox with AAS-style input variables
-```bash
-curl -X POST http://localhost:8087/simulation/robot/movebox \
-  -H "Content-Type: application/json" \
-  -d '{
-    "inputVariables": [
-      {"value": {"idShort": "StationId", "value": "Station_01"}},
-      {"value": {"idShort": "SourcePosition", "value": "Conveyor1"}},
-      {"value": {"idShort": "TargetPosition", "value": "Pallet1"}}
-    ]
-  }'
-```
-
-This publishes a generic MQTT station command to topic:
-
-simulation/{stationId}/operations/moveBox
-
-with `SourcePosition` and `TargetPosition` as separate parameters in the JSON payload.
-
-### Expected Response
-```json
-{
-  "status": "SUCCESS",
-  "message": "HoistDown executed successfully",
-  "duration_ms": 10000
-}
-```
-
-## Integration with BaSyx
-
-To enable operation delegation in your AASX file, add operations with delegation qualifiers. Example JSON (to add via REST API or AASX editor):
+Example request:
 
 ```json
 {
-  "modelType": "Operation",
-  "idShort": "Hoist_Down",
-  "description": [
-    {
-      "language": "en",
-      "text": "Lower the crane hoist"
-    }
-  ],
-  "qualifiers": [
-    {
-      "type": "invocationDelegation",
-      "value": "http://operation-delegation-service:8087/crane/hoist-down"
-    }
-  ],
-  "inputVariables": [
+  "inputArguments": [
     {
       "value": {
-        "modelType": "Property",
-        "idShort": "duration_ms",
-        "valueType": "xs:long",
-        "description": [{"language": "en", "text": "Pulse duration in milliseconds (fixed at 10000)"}]
-      }
-    }
-  ],
-  "outputVariables": [
-    {
-      "value": {
-        "modelType": "Property",
-        "idShort": "status",
-        "valueType": "xs:string"
+        "idShort": "Source",
+        "value": "urn:agent-aas:asset-instance:conveyor01",
+        "semanticId": {
+          "type": "ExternalReference",
+          "keys": [{
+            "type": "GlobalReference",
+            "value": "urn:agent-aas:semantics:SourceTransferLocation:1"
+          }]
+        }
       }
     },
     {
       "value": {
-        "modelType": "Property",
-        "idShort": "message",
-        "valueType": "xs:string"
+        "idShort": "Target",
+        "value": "urn:agent-aas:entity:oip-factory01:pallet01",
+        "semanticId": {
+          "type": "ExternalReference",
+          "keys": [{
+            "type": "GlobalReference",
+            "value": "urn:agent-aas:semantics:TargetTransferLocation:1"
+          }]
+        }
       }
-    }
+    },
+    {"value":{"idShort":"requestId","value":"job-42"}},
+    {"value":{"idShort":"runId","value":"experiment-7"}}
   ]
 }
 ```
 
-## Advantages Over Trigger Property Approach
+Published on `simulation/robots/Robot_01/operations/moveBox`:
 
-✅ **Standard AAS Pattern**: Uses proper Operation elements  
-✅ **Event-Driven**: No polling overhead  
-✅ **Cleaner API**: Standard operation invocation via Web UI  
-✅ **Parameters**: Can pass duration and other parameters  
-✅ **Return Values**: Get execution status and results  
-✅ **Web UI Support**: Operations show as clickable buttons  
-
-## Troubleshooting
-
-### Service can't connect to OPC UA
-- Check OPC UA server is running on host
-- Verify `host.docker.internal` resolves (Windows/Mac Docker Desktop feature)
-- For Linux, use `--add-host=host.docker.internal:host-gateway` in docker run
-
-### Operation not delegated
-- Check BaSyx feature is enabled (enabled by default)
-- Verify qualifier type is exactly `"invocationDelegation"`
-- Check service URL is accessible from BaSyx container
-- A 404 from this service shows up as a 424 in BaSyx
-- Review BaSyx logs for delegation errors
-
-### Pulse not visible in OPC UA
-- Increase `PULSE_DURATION_MS` in code
-- Check OPC UA client refresh rate
-- Verify node permissions allow writes
-
-## Development
-
-### Adding New Operations
-
-1. Add OPC UA node constant
-2. Create POST endpoint in `CraneOperationController`
-3. Implement OPC UA write logic
-4. Add operation to AASX with delegation qualifier
-5. Test via Web UI or REST API
-
-### Logging
-
-Check logs:
-```bash
-docker logs operation-delegation-service
+```json
+{
+  "requestId": "job-42",
+  "runId": "experiment-7",
+  "operation": "moveBox",
+  "params": {
+    "SourcePosition": "urn:agent-aas:asset-instance:conveyor01",
+    "TargetPosition": "urn:agent-aas:entity:oip-factory01:pallet01"
+  }
+}
 ```
 
-## Next Steps
+The source and target are passed through unchanged. `MoveBox` does not require
+or publish a `stationId`; the robot is selected by the URL and MQTT topic. If
+`requestId` is absent, the service generates a UUID. If `runId` is absent, it
+publishes an empty string.
 
-1. Update your AASX file to include operations with `invocationDelegation` qualifiers
-2. Restart BaSyx environment to load updated AASX
-3. Test operations from AAS Web UI
-4. Monitor OPC UA changes in UaExpert
+## Other input formats
+
+Conveyor and move-home endpoints accept BaSyx `inputVariables`, a JSON object
+with the expected field or `value`, a JSON array of wrapped variables, or a
+primitive. Recognized true values are `true`, `1`, and `on`; all other parsed
+boolean literals become false. Numeric values must be parseable as a double.
+
+The station path parameter is authoritative for station-addressed endpoints.
+
+## Responses and errors
+
+A successful response confirms MQTT publication, for example:
+
+```json
+{
+  "status": "SUCCESS",
+  "message": "Robot MoveBox command published",
+  "requestId": "job-42",
+  "runId": "experiment-7",
+  "operation": "moveBox",
+  "SourcePosition": "urn:agent-aas:asset-instance:conveyor01",
+  "TargetPosition": "urn:agent-aas:entity:oip-factory01:pallet01"
+}
+```
+
+Parsing, validation, connection, and publish failures return HTTP 500 with:
+
+```json
+{"status":"ERROR","error":"MoveBox failed: ..."}
+```
+
+Operation completion is reported separately by the controller. The Python
+orchestrator expects replies carrying the same `requestId` on a topic matching
+`simulation/+/replies/+`.
+
+## Configuration
+
+Defaults in `src/main/resources/application.yml`:
+
+```yaml
+server:
+  port: 8087
+
+simulation:
+  mqtt:
+    enabled: true
+    broker-url: tcp://mosquitto:1883
+    client-id: operation-delegation-service
+    qos: 1
+    station-topic-template: simulation/{stationId}/operations/{operation}
+    robot-topic-template: simulation/robots/{robotId}/operations/{operation}
+```
+
+Spring properties can be overridden using normal Spring Boot configuration or
+environment-variable binding.
+
+## Build, test, and run
+
+Java 17 is required for a local build.
+
+```powershell
+mvn test
+mvn clean package
+java -jar target/operation-delegation-service-1.0.0.jar
+```
+
+From the parent `basyx-setup` directory:
+
+```powershell
+docker compose up -d --build operation-delegation-service
+docker compose logs -f operation-delegation-service
+```
+
+Direct host-side test:
+
+```powershell
+Invoke-RestMethod `
+  -Uri "http://localhost:8087/simulation/robots/Robot_01/movebox" `
+  -Method Post -ContentType "application/json" `
+  -Body '{"SourcePosition":"urn:source","TargetPosition":"urn:target","requestId":"move-1"}'
+```
+
+For the end-to-end qualifier, allowlist, and completion-reply contracts, see
+[../README-OPERATION-DELEGATION.md](../README-OPERATION-DELEGATION.md).

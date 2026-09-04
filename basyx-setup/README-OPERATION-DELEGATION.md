@@ -1,231 +1,213 @@
-# BaSyx Operation Delegation for OPI Simulation
+# BaSyx operation delegation for the OIP simulation
 
-This setup uses BaSyx Operation Delegation to route operations selected by the
-orchestration agent from AAS to simulation commands over MQTT.
-
-## Purpose
-
-The orchestration agent discovers capabilities in robot AAS submodels and
-invokes the selected standardized AAS Operation. BaSyx forwards the call to the
-HTTP endpoint configured in the operation qualifier. The delegated Spring Boot
-service then publishes the controller-facing MQTT command for the OPI
-simulation stack.
-
-## Primary Runtime Architecture
+BaSyx Operation Delegation is the boundary between standardized AAS Operation
+invocation and controller-facing MQTT commands. The Python agent invokes the
+Operation through BaSyx; BaSyx forwards the body to the URL in the Operation's
+`invocationDelegation` qualifier.
 
 ```text
-Sensor event
-→ Python orchestration agent
-→ AAS Operation invocation
-→ operation-delegation-service
-→ MQTT command
-→ simulation robot/controller
-→ MQTT completion or fault
-→ Python orchestration agent
+Python agent -> BaSyx `/invoke` -> delegation HTTP endpoint
+             -> MQTT operation command -> OIP controller
+             -> MQTT completion/fault reply -> Python agent
 ```
 
-```mermaid
-sequenceDiagram
-    participant Sensor
-    participant Agent as Orchestration agent
-    participant AAS as Robot AAS
-    participant Adapter as Delegation adapter
-    participant Robot as Robot/controller
+An HTTP success from the delegation service means that the command was
+published. It does not mean that the physical or simulated operation has
+completed.
 
-    Sensor-->>Agent: Station event
-    Agent->>Agent: Match and reserve robot
-    Agent->>AAS: Invoke AAS Operation
-    AAS->>Adapter: Delegated request
-    Adapter->>Robot: MQTT command
-    Robot-->>Agent: Completion or fault
-    Agent->>Agent: Finalize and release
-```
+## Delegation endpoints
 
-This is the official command path. The agent commands robots through AAS
-Operations; MQTT is the implementation-level connection between the delegation
-adapter and the controller.
+The current Spring Boot adapter exposes:
 
-## Delegation Endpoints in operation-delegation-service
+| Operation | POST endpoint | MQTT topic |
+|---|---|---|
+| Set conveyor running | `/simulation/stations/{stationId}/conveyorbelt/run` | `simulation/{stationId}/operations/conveyorRunning` |
+| Set conveyor speed | `/simulation/stations/{stationId}/conveyorbelt/speed` | `simulation/{stationId}/operations/conveyorSpeed` |
+| Move a box | `/simulation/robots/{robotId}/movebox` | `simulation/robots/{robotId}/operations/moveBox` |
+| Move robot home | `/simulation/stations/{stationId}/robot/move-to-home` | `simulation/{stationId}/operations/MoveToHome` |
 
-Use these HTTP endpoints as operation delegation targets:
+There is no generic `/operation/invoke` endpoint.
 
-1. Conveyor running: /simulation/stations/{stationId}/conveyorbelt/run
-2. Conveyor speed: /simulation/stations/{stationId}/conveyorbelt/speed
-3. Robot MoveBox: /simulation/robot/movebox
-4. Robot MoveToHome: /simulation/stations/{stationId}/robot/move-to-home
-5. Generic station operation: /simulation/stations/{stationId}/operation/invoke
+### Bundled AASX compatibility
 
-Base URL from other containers:
+The `ExecuteMoveBox` qualifier in `aas/robot01.aasx` uses the supported
+robot-addressed endpoint and is the operation used by the primary path. The
+other bundled qualifiers are not currently aligned with this adapter:
 
-http://operation-delegation-service:8087
+- conveyor qualifiers use `/simulation/conveyors/{conveyorId}/...`, while the
+  adapter currently exposes station-addressed conveyor endpoints;
+- the robot move-home qualifier uses
+  `/simulation/robots/{robotId}/move-to-home`, while the adapter currently
+  exposes the station-addressed endpoint; and
+- the bundled `convey-workpiece` qualifier has no corresponding controller
+  endpoint.
 
-## MQTT Topic Contract
+Those non-primary AAS Operations will return HTTP 404 until either their AASX
+qualifiers or the adapter routes are aligned.
 
-Configured in [operation-delegation-service/src/main/resources/application.yml](operation-delegation-service/src/main/resources/application.yml):
-
-1. Topic template: simulation/{stationId}/operations/{operation}
-2. Conveyor running topic: simulation/Station_01/operations/conveyorRunning
-3. Conveyor speed topic: simulation/Station_01/operations/conveyorSpeed
-4. Robot MoveBox topic example: simulation/Station_01/operations/moveBox
-
-The simulation listener must subscribe to matching topics.
-
-## AAS Operation Qualifier Example
-
-Example qualifier for operation delegation:
+Use the container DNS name in AAS qualifiers. For example, Robot 01's
+`MoveBox` qualifier is:
 
 ```json
 {
   "type": "invocationDelegation",
-        "value": "http://operation-delegation-service:8087/simulation/stations/Station_01/conveyorbelt/speed"
+  "value": "http://operation-delegation-service:8087/simulation/robots/Robot_01/movebox"
 }
 ```
 
-MoveBox qualifier example:
+The qualifier type is case-sensitive and must be `invocationDelegation`. The
+target must be reachable from `aas-env`.
 
-```json
-{
-        "type": "invocationDelegation",
-        "value": "http://operation-delegation-service:8087/simulation/robot/movebox"
-}
-```
+## MoveBox contract
 
-Key points:
-
-1. Qualifier type must be exactly invocationDelegation.
-2. URL must be reachable from aas-env container.
-3. AAS operation inputs are forwarded and parsed by the delegated service.
-4. MoveBox identifies source and target inputs through
-   `SourceTransferLocation` and `TargetTransferLocation` semantic IDs.
-5. Canonical identities are translated to OIP-local node/station names only in
-   the delegation service's `simulation.identity` configuration. Explicit
-   legacy `StationId`, `SourcePosition`, and `TargetPosition` inputs remain
-   accepted for compatibility.
-
-## Robot MoveBox Payload Contract
-
-For MoveBox operation delegation, define source and target AAS input variables
-with these semantics (their `idShort` values are arbitrary):
+`MoveBox` is the operation used by the primary semantic orchestration path.
+Its AAS Operation must declare two input variables with these semantic IDs:
 
 1. `urn:agent-aas:semantics:SourceTransferLocation:1`
 2. `urn:agent-aas:semantics:TargetTransferLocation:1`
 
-The delegated service publishes this MQTT message shape:
+Their `idShort` values may vary. The agent maps values using the semantic IDs
+and adds `requestId` and `runId` metadata inputs. The adapter also accepts
+legacy inputs named `SourcePosition` and `TargetPosition` when semantic IDs are
+not present.
+
+Example BaSyx delegation request:
 
 ```json
 {
-        "requestId": "<generated-or-forwarded>",
-        "stationId": "Station_01",
-        "operation": "moveBox",
-        "params": {
-                "SourcePosition": "Conveyor1",
-                "TargetPosition": "Pallet1"
+  "inputArguments": [
+    {
+      "value": {
+        "modelType": "Property",
+        "idShort": "Source",
+        "valueType": "xs:string",
+        "value": "urn:agent-aas:asset-instance:conveyor01",
+        "semanticId": {
+          "type": "ExternalReference",
+          "keys": [{
+            "type": "GlobalReference",
+            "value": "urn:agent-aas:semantics:SourceTransferLocation:1"
+          }]
         }
+      }
+    },
+    {
+      "value": {
+        "modelType": "Property",
+        "idShort": "Target",
+        "valueType": "xs:string",
+        "value": "urn:agent-aas:entity:oip-factory01:pallet01",
+        "semanticId": {
+          "type": "ExternalReference",
+          "keys": [{
+            "type": "GlobalReference",
+            "value": "urn:agent-aas:semantics:TargetTransferLocation:1"
+          }]
+        }
+      }
+    },
+    {"value":{"idShort":"requestId","value":"job-42"}},
+    {"value":{"idShort":"runId","value":"experiment-7"}}
+  ],
+  "inoutputArguments": [],
+  "requestedTimeout": 8000
 }
 ```
 
-The simulation listener should resolve both positions within `StationId` and then execute:
+The resulting MQTT command is:
 
-1. Move to `SourcePosition`.
-2. Pick.
-3. Move to `TargetPosition`.
-4. Release.
+```json
+{
+  "requestId": "job-42",
+  "runId": "experiment-7",
+  "operation": "moveBox",
+  "params": {
+    "SourcePosition": "urn:agent-aas:asset-instance:conveyor01",
+    "TargetPosition": "urn:agent-aas:entity:oip-factory01:pallet01"
+  }
+}
+```
 
-The station and both positions remain explicit throughout delegation.
+Important details:
 
-## BaSyx Allowlist Requirement
+- The topic selects the robot; the payload has no `robotId`.
+- The request and payload have no `stationId` requirement for `MoveBox`.
+- Canonical source and target identities are preserved unchanged. The adapter
+  does not map them to simulator-local names.
+- If `requestId` is absent, the adapter generates a UUID. If `runId` is absent,
+  it publishes an empty string.
+- A missing source or target returns HTTP 500 with `status: "ERROR"`.
 
-BaSyx operation delegation target validation is enabled. Allowlist is configured in [basyx/aas-env.properties](basyx/aas-env.properties):
+The controller must use the same `requestId` in its lifecycle replies.
 
-1. basyx.submodelrepository.feature.operation.delegation.security.allowlist.hosts=operation-delegation-service
-2. basyx.submodelrepository.feature.operation.delegation.security.allowlist.ports=8087
+## Conveyor and move-home inputs
 
-Without this, delegation may fail with HTTP 424 and blocked private address errors.
+Conveyor running accepts `running`, `value`, an AAS variable, or a primitive
+boolean-like value. Conveyor speed similarly accepts `speed`, `value`, an AAS
+variable, or a number. Move-to-home accepts `move`, `value`, an AAS variable,
+or a boolean-like value. The station always comes from the endpoint path for
+these operations.
 
-## Quick Validation Steps
-
-1. Start stack:
+Examples:
 
 ```powershell
-docker compose --profile demo up -d
+Invoke-RestMethod `
+  -Uri "http://localhost:8087/simulation/stations/Station_01/conveyorbelt/run" `
+  -Method Post -ContentType "application/json" `
+  -Body '{"running":true,"requestId":"run-1"}'
+
+Invoke-RestMethod `
+  -Uri "http://localhost:8087/simulation/stations/Station_01/conveyorbelt/speed" `
+  -Method Post -ContentType "application/json" `
+  -Body '{"speed":55.0,"requestId":"speed-1"}'
+
+Invoke-RestMethod `
+  -Uri "http://localhost:8087/simulation/robots/Robot_01/movebox" `
+  -Method Post -ContentType "application/json" `
+  -Body '{"SourcePosition":"urn:source","TargetPosition":"urn:target","requestId":"move-1"}'
 ```
 
-2. Test delegated endpoints directly:
+## Completion and fault replies
 
-```powershell
-Invoke-RestMethod -Uri "http://localhost:8087/simulation/stations/Station_01/conveyorbelt/run" -Method Post -ContentType "application/json" -Body '{"running":true}'
-Invoke-RestMethod -Uri "http://localhost:8087/simulation/stations/Station_01/conveyorbelt/speed" -Method Post -ContentType "application/json" -Body '{"speed":55.0}'
+The Python agent listens on `simulation/+/replies/+`. A controller reply must
+be a JSON object with the delegated `requestId` and either `status` or boolean
+`success`:
+
+```json
+{"requestId":"job-42","status":"completed"}
 ```
 
-3. Invoke the operation from AAS Web UI and verify published MQTT messages.
+- Non-terminal: `started`, `running`, `accepted`
+- Successful terminal: `completed`, `complete`, `succeeded`, `success`
+- Failed terminal: `failed`, `fault`, `faulted`, `error`
 
-4. Inspect logs when debugging:
+On a terminal reply or timeout, the agent records the result and releases the
+reserved resource. Unknown request IDs and unsupported statuses are ignored.
 
-```powershell
-docker logs -f aas-env
-docker logs -f operation-delegation-service
-docker logs -f mosquitto
+## BaSyx allowlist
+
+Delegation target validation is configured in
+[basyx/aas-env.properties](basyx/aas-env.properties):
+
+```properties
+basyx.submodelrepository.feature.operation.delegation.security.allowlist.hosts=operation-delegation-service
+basyx.submodelrepository.feature.operation.delegation.security.allowlist.ports=8087
 ```
 
-When the optional `mqtt-first` profile is enabled, inspect its adapter
-separately with `docker logs -f mqtt-operation-bridge`.
+Without this allowlist, BaSyx may return HTTP 424 for the private delegation
+target.
 
-## Optional MQTT-First Adapter
-
-The bridge service in
-[mqtt-operation-bridge/README.md](mqtt-operation-bridge/README.md) is intended
-for external systems that already issue MQTT commands. It is not required by
-the primary agent architecture.
-
-```text
-External MQTT command
-→ mqtt-operation-bridge
-→ AAS Operation invocation
-→ operation-delegation-service
-→ MQTT command
-→ controller
-```
-
-The bridge listens to `oip/command/{stationId}/{action}`, invokes the
-station-specific AAS Operation, and publishes its interoperability reply under
-`oip/reply/{stationId}/{operation}`. Enable it explicitly:
-
-```powershell
-docker compose --profile mqtt-first up -d
-```
-
-Do not interpret the MQTT-first input and the controller-facing MQTT output as
-one circular command flow. They are separate boundaries used only when an
-external MQTT producer activates the optional adapter.
-
-## Troubleshooting
-
-1. HTTP 424 from AAS invoke:
-   Delegation target was blocked, unreachable, or returned a downstream error. Check allowlist and service logs.
-
-2. HTTP 404 from delegated invocation:
-   Endpoint path in invocationDelegation qualifier does not match service route. Recheck URL path.
-
-3. HTTP 200 from delegated service but simulation did not change state:
-   MQTT topic contract mismatch. Confirm stationId and operation names match subscriber expectations.
-
-4. Changes not reflected after code update:
-   Rebuild service image:
+## Run and troubleshoot
 
 ```powershell
 docker compose up -d --build operation-delegation-service
+docker compose logs -f aas-env operation-delegation-service mosquitto python-agent
 ```
 
-For the optional bridge, include its profile:
-
-```powershell
-docker compose --profile mqtt-first up -d --build mqtt-operation-bridge
-```
-
-## Related Files
-
-1. [README.md](README.md)
-2. [docker-compose.yml](docker-compose.yml)
-3. [basyx/aas-env.properties](basyx/aas-env.properties)
-4. [operation-delegation-service/src/main/resources/application.yml](operation-delegation-service/src/main/resources/application.yml)
-5. [mqtt-operation-bridge/README.md](mqtt-operation-bridge/README.md)
+- HTTP 404: the qualifier path does not match one of the endpoint paths above.
+- HTTP 424 from BaSyx: inspect the allowlist, delegation service availability,
+  and the downstream HTTP response.
+- HTTP 200 but no simulated action: inspect the MQTT topic and controller
+  subscription.
+- Job times out: confirm that the controller publishes a terminal reply with
+  the exact `requestId` on a topic matching `simulation/+/replies/+`.

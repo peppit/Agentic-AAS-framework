@@ -83,30 +83,6 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-  mqtt-operation-bridge:
-    build:
-      context: ./mqtt-operation-bridge
-      dockerfile: Dockerfile
-    container_name: mqtt-operation-bridge
-    profiles: ["mqtt-first"]
-    environment:
-      - BRIDGE_MQTT_BROKER_URL=tcp://mosquitto:1883
-      - BRIDGE_MQTT_TOPIC_FILTER=oip/command/+/+
-      - BRIDGE_MQTT_COMMAND_PREFIX=oip/command
-      - BRIDGE_MQTT_REPLY_TOPIC_PREFIX=oip/reply
-      - BRIDGE_AAS_BASE_URL=http://aas-env:8081
-      - STATION_REGISTRY_FILE=/config/stations.json
-    volumes:
-      - ./stations.json:/config/stations.json:ro
-    ports:
-      - '8091:8091'
-    restart: always
-    depends_on:
-      mosquitto:
-        condition: service_healthy
-      aas-env:
-        condition: service_healthy
-
   aas-discovery:
     image: eclipsebasyx/aas-discovery:2.0.0-SNAPSHOT
     container_name: aas-discovery

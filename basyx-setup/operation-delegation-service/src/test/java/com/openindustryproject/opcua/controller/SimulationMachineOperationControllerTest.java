@@ -3,7 +3,6 @@ package com.openindustryproject.opcua.controller;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.openindustryproject.opcua.service.MqttCommandPublisherService;
-import com.openindustryproject.opcua.service.SimulationIdentityTranslator;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.ResponseEntity;
@@ -17,14 +16,13 @@ import static org.mockito.Mockito.verify;
 class SimulationMachineOperationControllerTest {
 
     @Test
-    void moveBoxUsesInputStationAndSeparatePositions() throws Exception {
+    void moveBoxPublishesPositionsWithoutStation() throws Exception {
         MqttCommandPublisherService publisher = mock(MqttCommandPublisherService.class);
         SimulationMachineOperationController controller =
                 new SimulationMachineOperationController(publisher);
         String input = """
                 {
                   "inputArguments": [
-                    {"value":{"idShort":"StationId","value":"Station_01"}},
                     {"value":{"idShort":"SourcePosition","value":"Conveyor_A"}},
                     {"value":{"idShort":"TargetPosition","value":"Pallet_B"}},
                     {"value":{"idShort":"requestId","value":"request-1"}},
@@ -36,7 +34,6 @@ class SimulationMachineOperationControllerTest {
         ResponseEntity<Map<String, Object>> response = controller.moveBox(input, "Robot_02");
 
         assertEquals(200, response.getStatusCode().value());
-        assertEquals("Station_01", response.getBody().get("stationId"));
         assertEquals("Conveyor_A", response.getBody().get("SourcePosition"));
         assertEquals("Pallet_B", response.getBody().get("TargetPosition"));
 
@@ -47,7 +44,7 @@ class SimulationMachineOperationControllerTest {
                 payloadCaptor.capture());
 
         JsonObject payload = JsonParser.parseString(payloadCaptor.getValue()).getAsJsonObject();
-        assertEquals("Station_01", payload.get("stationId").getAsString());
+        assertEquals(false, payload.has("stationId"));
         assertEquals("request-1", payload.get("requestId").getAsString());
         assertEquals("run-1", payload.get("runId").getAsString());
         assertEquals(
@@ -59,15 +56,10 @@ class SimulationMachineOperationControllerTest {
     }
 
     @Test
-    void moveBoxTranslatesCanonicalIdentitiesUsingParameterSemantics() throws Exception {
+    void moveBoxPreservesCanonicalIdentitiesUsingParameterSemantics() throws Exception {
         MqttCommandPublisherService publisher = mock(MqttCommandPublisherService.class);
-        SimulationIdentityTranslator translator = new SimulationIdentityTranslator();
-        translator.setAliases(Map.of(
-                "urn:test:conveyor", "Conveyor_01",
-                "urn:test:pallet", "Pallet_01"));
-        translator.setSourceStations(Map.of("urn:test:conveyor", "Station_01"));
         SimulationMachineOperationController controller =
-                new SimulationMachineOperationController(publisher, translator);
+                new SimulationMachineOperationController(publisher);
         String input = """
                 {
                   "inputArguments": [
@@ -89,9 +81,8 @@ class SimulationMachineOperationControllerTest {
         ResponseEntity<Map<String, Object>> response = controller.moveBox(input, "Robot_02");
 
         assertEquals(200, response.getStatusCode().value());
-        assertEquals("Station_01", response.getBody().get("stationId"));
-        assertEquals("Conveyor_01", response.getBody().get("SourcePosition"));
-        assertEquals("Pallet_01", response.getBody().get("TargetPosition"));
+        assertEquals("urn:test:conveyor", response.getBody().get("SourcePosition"));
+        assertEquals("urn:test:pallet", response.getBody().get("TargetPosition"));
 
         ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
         verify(publisher).publishRobotOperation(
@@ -100,10 +91,10 @@ class SimulationMachineOperationControllerTest {
                 payloadCaptor.capture());
         JsonObject payload = JsonParser.parseString(payloadCaptor.getValue()).getAsJsonObject();
         assertEquals(
-                "Conveyor_01",
+                "urn:test:conveyor",
                 payload.getAsJsonObject("params").get("SourcePosition").getAsString());
         assertEquals(
-                "Pallet_01",
+                "urn:test:pallet",
                 payload.getAsJsonObject("params").get("TargetPosition").getAsString());
     }
 }

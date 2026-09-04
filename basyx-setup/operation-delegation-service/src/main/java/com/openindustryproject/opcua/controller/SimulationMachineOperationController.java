@@ -5,8 +5,6 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.openindustryproject.opcua.service.MqttCommandPublisherService;
-import com.openindustryproject.opcua.service.SimulationIdentityTranslator;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -36,55 +34,9 @@ public class SimulationMachineOperationController {
             "urn:agent-aas:semantics:TargetTransferLocation:1";
 
     private final MqttCommandPublisherService mqttPublisher;
-    private final SimulationIdentityTranslator identityTranslator;
 
-    @Autowired
-    public SimulationMachineOperationController(
-            MqttCommandPublisherService mqttPublisher,
-            SimulationIdentityTranslator identityTranslator) {
-        this.mqttPublisher = mqttPublisher;
-        this.identityTranslator = identityTranslator;
-    }
-
-    // Kept for direct compatibility use and focused unit tests.
     public SimulationMachineOperationController(MqttCommandPublisherService mqttPublisher) {
-        this(mqttPublisher, new SimulationIdentityTranslator());
-    }
-
-        @PostMapping(
-            value = { "/simulation/stations/{stationId}/operation/invoke"},
-            produces = MediaType.APPLICATION_JSON_VALUE)
-        public ResponseEntity<Map<String, Object>> invokeSimulationOperation(
-            @RequestBody String input,
-            @PathVariable(value = "stationId", required = false) String stationIdFromPath) {
-        logger.info("Executing generic simulation operation");
-
-        try {
-            JsonObject root = parseInputRoot(input);
-            String requestId = extractRequestId(root, input);
-            String stationId = extractRequiredStationId(root, stationIdFromPath);
-            String operation = extractStringParameter(root, "operation", null);
-
-            if (operation == null || operation.isBlank()) {
-                throw new IllegalArgumentException("Missing required parameter: operation");
-            }
-
-            JsonObject params = extractParams(root);
-            String payload = buildGenericCommandPayload(requestId, stationId, operation, params);
-            mqttPublisher.publishStationOperation(stationId, operation, payload);
-
-            Map<String, Object> response = new HashMap<>();
-            response.put("status", "SUCCESS");
-            response.put("message", "Simulation operation command published");
-            response.put("requestId", requestId);
-            response.put("stationId", stationId);
-            response.put("operation", operation);
-            response.put("params", params);
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            logger.error("Error executing generic simulation operation", e);
-            return buildErrorResponse("InvokeSimulationOperation", e);
-        }
+        this.mqttPublisher = mqttPublisher;
     }
 
         @PostMapping(
@@ -187,9 +139,8 @@ public class SimulationMachineOperationController {
                         "Missing semantic TargetTransferLocation parameter");
             }
 
-            String stationId = extractMoveBoxStationId(root, sourceIdentity);
-            String sourcePosition = identityTranslator.toLocalName(sourceIdentity);
-            String targetPosition = identityTranslator.toLocalName(targetIdentity);
+            String sourcePosition = sourceIdentity;
+            String targetPosition = targetIdentity;
 
             JsonObject params = new JsonObject();
             params.addProperty("SourcePosition", sourcePosition);
@@ -197,13 +148,12 @@ public class SimulationMachineOperationController {
 
             String operation = "moveBox";
             logger.info(
-                "Publishing {} for station={} source={} target={}",
+                "Publishing {} for source={} target={}",
                 operation,
-                stationId,
                 sourcePosition,
                 targetPosition);
             String payload = buildGenericCommandPayload(
-                requestId, runId, stationId, operation, params);
+                requestId, runId, null, operation, params);
             mqttPublisher.publishRobotOperation(robotId, operation, payload);
 
             Map<String, Object> response = new HashMap<>();
@@ -211,7 +161,6 @@ public class SimulationMachineOperationController {
             response.put("message", "Robot MoveBox command published");
             response.put("requestId", requestId);
             response.put("runId", runId);
-            response.put("stationId", stationId);
             response.put("operation", operation);
             response.put("SourcePosition", sourcePosition);
             response.put("TargetPosition", targetPosition);
@@ -385,22 +334,6 @@ public class SimulationMachineOperationController {
         return false;
     }
 
-    private String extractMoveBoxStationId(JsonObject root, String sourceIdentity) {
-        String stationId = extractStringParameterAny(root, null, "StationId");
-        if (stationId == null || stationId.isBlank()) {
-            stationId = extractStringFromParams(extractParams(root), "StationId");
-        }
-        if (stationId != null && !stationId.isBlank()) {
-            return stationId;
-        }
-        stationId = identityTranslator.stationForSource(sourceIdentity);
-        if (stationId != null) {
-            return stationId;
-        }
-        throw new IllegalArgumentException(
-                "No OIP station mapping configured for source " + sourceIdentity);
-    }
-
     private String extractRequiredStationId(JsonObject root, String stationIdFromPath) {
         if (stationIdFromPath != null && !stationIdFromPath.isBlank()) {
             return stationIdFromPath;
@@ -545,7 +478,9 @@ public class SimulationMachineOperationController {
         JsonObject payload = new JsonObject();
         payload.addProperty("requestId", requestId);
         payload.addProperty("runId", runId);
-        payload.addProperty("stationId", stationId);
+        if (stationId != null && !stationId.isBlank()) {
+            payload.addProperty("stationId", stationId);
+        }
         payload.addProperty("operation", operation);
         payload.add("params", params == null ? new JsonObject() : params);
         return payload.toString();
