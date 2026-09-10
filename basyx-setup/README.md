@@ -140,9 +140,12 @@ For each false-to-true semantic trigger transition, the agent:
    the resource on completion, failure, timeout, or shutdown.
 
 A true trigger is latched. It must become false before another true update can
-create a new job. Jobs that cannot be matched or reserved fail immediately;
-they are not queued for a later retry. HTTP invocation retries apply only to
-transport errors and HTTP 5xx responses.
+create a new job. A valid job whose reachable resources are temporarily busy,
+faulted, unavailable, or involved in a reservation conflict remains pending.
+It is retried when resource state changes or an execution releases a resource,
+up to `QUEUE_TIMEOUT_SECONDS`. Jobs with no matching capability, no reachable
+resource, or an invalid Operation binding still fail immediately. HTTP
+invocation retries apply only to transport errors and HTTP 5xx responses.
 
 The agent subscribes to:
 
@@ -225,7 +228,7 @@ The Compose file supplies the main defaults. Useful overrides include:
 
 | Component | Variables |
 |---|---|
-| Python agent | `MQTT_HOST`, `MQTT_PORT`, `MQTT_TOPIC`, `OPERATION_REPLY_TOPIC`, `AAS_REGISTRY_URL`, `SUBMODEL_REGISTRY_URL`, `REGISTRY_REFRESH_SECONDS`, `SEMANTIC_DISCOVERY_DIAGNOSTIC`, `HTTP_TIMEOUT_SECONDS`, `OPERATION_TIMEOUT_SECONDS`, `INVOKE_RETRY_COUNT`, `ORCHESTRATOR_LOG_CSV_PATH`, `MEASUREMENT_RUN_ID` |
+| Python agent | `MQTT_HOST`, `MQTT_PORT`, `MQTT_TOPIC`, `OPERATION_REPLY_TOPIC`, `AAS_REGISTRY_URL`, `SUBMODEL_REGISTRY_URL`, `REGISTRY_REFRESH_SECONDS`, `SEMANTIC_DISCOVERY_DIAGNOSTIC`, `HTTP_TIMEOUT_SECONDS`, `OPERATION_TIMEOUT_SECONDS`, `QUEUE_TIMEOUT_SECONDS`, `INVOKE_RETRY_COUNT`, `ORCHESTRATOR_LOG_CSV_PATH`, `MEASUREMENT_RUN_ID` |
 | Telemetry bridge | `MQTT_HOST`, `MQTT_PORT`, `MQTT_TELEMETRY_TOPIC`, `AAS_REGISTRY_URL`, `SUBMODEL_REGISTRY_URL`, `REGISTRY_REFRESH_SECONDS`, `HTTP_TIMEOUT_SECONDS`, `AAS_UPDATE_RETRY_COUNT`, `AAS_RETRY_BASE_SECONDS`, `MQTT_RECONNECT_SECONDS`, `ASSET_QUEUE_SIZE`, `EVENT_DEDUP_WINDOW`, `FAULT_TOPIC` |
 
 `REGISTRY_REFRESH_SECONDS <= 0` disables periodic refresh in the Python agent.

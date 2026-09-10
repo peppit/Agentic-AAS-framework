@@ -35,6 +35,9 @@ class AgentConfig:
     operation_timeout_seconds: float = float(
         os.getenv("OPERATION_TIMEOUT_SECONDS", "60")
     )
+    queue_timeout_seconds: float = float(
+        os.getenv("QUEUE_TIMEOUT_SECONDS", "60")
+    )
     invoke_retry_count: int = int(os.getenv("INVOKE_RETRY_COUNT", "3"))
     orchestrator_log_csv_path: str = os.getenv(
         "ORCHESTRATOR_LOG_CSV_PATH",

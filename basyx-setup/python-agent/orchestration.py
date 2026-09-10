@@ -94,6 +94,9 @@ class FactoryOrchestrator:
         self.state: dict[str, dict[str, object]] = {}
         self.latched_triggers: set[tuple[str, str]] = set()
         self.active_jobs_by_request_id: dict[str, ActiveExecution] = {}
+        self.pending_jobs_by_request_id: dict[str, ProcessJob] = {}
+        self.pending_retry_tasks: dict[str, asyncio.Task] = {}
+        self._availability_changed = asyncio.Event()
         self.run_id = config.measurement_run_id.strip() or str(uuid.uuid4())
         self.metrics = SemanticMetricsLogger(
             config.orchestrator_log_csv_path, self.run_id
@@ -102,12 +105,23 @@ class FactoryOrchestrator:
     async def initialize(self) -> None:
         catalog = await self.catalog_manager.snapshot()
         await self.reconcile_catalog(SemanticCatalog(), catalog)
+        self._availability_changed.clear()
         print(
             f"[ORCHESTRATOR] Semantic runtime initialized "
             f"resources={len(catalog.resources)} run_id={self.run_id}"
         )
 
     async def close(self) -> None:
+        pending_jobs = list(self.pending_jobs_by_request_id.values())
+        retry_tasks = list(self.pending_retry_tasks.values())
+        self.pending_jobs_by_request_id.clear()
+        self.pending_retry_tasks.clear()
+        for task in retry_tasks:
+            task.cancel()
+        await asyncio.gather(*retry_tasks, return_exceptions=True)
+        for job in pending_jobs:
+            await self._fail_unreserved(job, "orchestrator shutdown")
+
         executions = list(self.active_jobs_by_request_id.values())
         for execution in executions:
             await self._finish_execution(
@@ -150,6 +164,7 @@ class FactoryOrchestrator:
                 "[CATALOG] semantic resource added: "
                 f"globalAssetId={resource_id} offeredCapabilities={offered}"
             )
+        self._availability_changed.set()
 
     @staticmethod
     def _event_element_candidates(element_token: str) -> list[str]:
@@ -224,7 +239,14 @@ class FactoryOrchestrator:
             return
 
         asset_state = self.state.setdefault(definition.owner_asset_id, {})
+        previous_value = asset_state.get(definition.semantic_id)
         asset_state[definition.semantic_id] = value
+        if (
+            definition.semantic_id
+            in {AVAILABLE_FOR_SCHEDULING, FAULT_ACTIVE, IS_MOVING}
+            and previous_value != value
+        ):
+            self._availability_changed.set()
         trigger_key = (definition.owner_asset_id, definition.semantic_id)
         requirements = catalog.requirements_by_trigger.get(trigger_key, [])
         if not requirements:
@@ -342,6 +364,51 @@ class FactoryOrchestrator:
         await self.metrics.record(job, "failed", reason)
         print(f"[ORCHESTRATOR] Job {job.job_id} failed: {reason}")
 
+    async def _defer_job(self, job: ProcessJob, reason: str) -> None:
+        """Hold a valid job until resource state changes or its queue time expires."""
+        elapsed = time.monotonic() - job.created_at
+        remaining = self.config.queue_timeout_seconds - elapsed
+        if remaining <= 0:
+            await self._fail_unreserved(
+                job,
+                f"queue timeout after {self.config.queue_timeout_seconds:.1f}s",
+            )
+            return
+        if job.job_id in self.pending_jobs_by_request_id:
+            return
+
+        self.pending_jobs_by_request_id[job.job_id] = job
+        task = asyncio.create_task(self._retry_pending_job(job, remaining))
+        self.pending_retry_tasks[job.job_id] = task
+        print(
+            f"[ORCHESTRATOR] Job {job.job_id} pending: {reason}; "
+            f"queue timeout in {remaining:.1f}s"
+        )
+
+    async def _retry_pending_job(
+        self, job: ProcessJob, remaining_seconds: float
+    ) -> None:
+        try:
+            await asyncio.wait_for(
+                self._availability_changed.wait(), timeout=remaining_seconds
+            )
+        except TimeoutError:
+            self.pending_jobs_by_request_id.pop(job.job_id, None)
+            self.pending_retry_tasks.pop(job.job_id, None)
+            await self._fail_unreserved(
+                job,
+                f"queue timeout after {self.config.queue_timeout_seconds:.1f}s",
+            )
+            return
+        except asyncio.CancelledError:
+            return
+
+        self._availability_changed.clear()
+        self.pending_jobs_by_request_id.pop(job.job_id, None)
+        self.pending_retry_tasks.pop(job.job_id, None)
+        await self.job_queue.put(job)
+        print(f"[ORCHESTRATOR] Retrying pending job {job.job_id}")
+
     async def process_job(self, job: ProcessJob) -> None:
         matching_started = time.perf_counter()
         catalog = await self.catalog_manager.snapshot()
@@ -389,8 +456,9 @@ class FactoryOrchestrator:
         job.available_candidate_count = len(available)
         if not available:
             job.matching_ms = (time.perf_counter() - matching_started) * 1000
-            await self._fail_unreserved(
-                job, "candidates reachable but unavailable"
+            await self._defer_job(
+                job,
+                "candidates reachable but unavailable",
             )
             return
 
@@ -423,7 +491,7 @@ class FactoryOrchestrator:
         )
         job.reservation_ms = (time.perf_counter() - reservation_started) * 1000
         if selected_resource_id is None:
-            await self._fail_unreserved(job, "reservation conflict")
+            await self._defer_job(job, "reservation conflict")
             return
 
         offer, binding = select_candidate(runnable, selected_resource_id)
@@ -551,6 +619,7 @@ class FactoryOrchestrator:
             execution.timeout_task.cancel()
         if job.selected_resource_id:
             await self.reservations.release(job.selected_resource_id)
+            self._availability_changed.set()
         await self.metrics.record(job, result, failure_reason)
         print(
             f"[ORCHESTRATOR] Job {job.job_id} {result}; "
