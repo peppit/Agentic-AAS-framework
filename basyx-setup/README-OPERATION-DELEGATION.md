@@ -30,9 +30,10 @@ There is no generic `/operation/invoke` endpoint.
 
 ### Bundled AASX compatibility
 
-The `ExecuteMoveBox` qualifier in `aas/robot01.aasx` uses the supported
-robot-addressed endpoint and is the operation used by the primary path. The
-other bundled qualifiers are not currently aligned with this adapter:
+The `ExecuteMoveBox` qualifiers in `aas/robot01.aasx` and `aas/robot02.aasx`
+use the supported robot-addressed endpoints for `Robot_01` and `Robot_02`.
+These are the operations used by the primary path. Other bundled qualifiers
+are not currently aligned with this adapter:
 
 - conveyor qualifiers use `/simulation/conveyors/{conveyorId}/...`, while the
   adapter currently exposes station-addressed conveyor endpoints;
@@ -42,8 +43,9 @@ other bundled qualifiers are not currently aligned with this adapter:
 - the bundled `convey-workpiece` qualifier has no corresponding controller
   endpoint.
 
-Those non-primary AAS Operations will return HTTP 404 until either their AASX
-qualifiers or the adapter routes are aligned.
+Those paths return HTTP 404 at the adapter; a call through BaSyx may surface
+the downstream failure as HTTP 424. Aligning the URL alone is insufficient
+for conveyor and move-home calls: their input-format limits are described below.
 
 Use the container DNS name in AAS qualifiers. For example, Robot 01's
 `MoveBox` qualifier is:
@@ -67,9 +69,11 @@ Its AAS Operation must declare two input variables with these semantic IDs:
 2. `urn:agent-aas:semantics:TargetTransferLocation:1`
 
 Their `idShort` values may vary. The agent maps values using the semantic IDs
-and adds `requestId` and `runId` metadata inputs. The adapter also accepts
-legacy inputs named `SourcePosition` and `TargetPosition` when semantic IDs are
-not present.
+and adds `requestId` and `runId` metadata inputs. The adapter accepts wrapped
+variables in either `inputArguments` or `inputVariables` (`inputVariables`
+takes precedence if both are present). For either missing semantic value, it
+falls back to `SourcePosition` or `TargetPosition` in top-level fields, named
+variables, or `params`.
 
 Example BaSyx delegation request:
 
@@ -142,11 +146,15 @@ The controller must use the same `requestId` in its lifecycle replies.
 
 ## Conveyor and move-home inputs
 
-Conveyor running accepts `running`, `value`, an AAS variable, or a primitive
-boolean-like value. Conveyor speed similarly accepts `speed`, `value`, an AAS
-variable, or a number. Move-to-home accepts `move`, `value`, an AAS variable,
-or a boolean-like value. The station always comes from the endpoint path for
-these operations.
+Use JSON objects with `running`, `speed`, or `move`, respectively, plus an
+optional `requestId`. The station comes from the endpoint path. These endpoints
+also accept `value`, wrapped `inputVariables`, or an array of wrapped variables.
+
+Their value parsers do not support `inputArguments`: with only that wrapper,
+speed returns HTTP 500, while running and move-home interpret the command as
+`false`. Use the supported formats even after correcting a bundled qualifier
+URL. Full conversion rules are in the
+[service README](operation-delegation-service/README.md#other-input-formats).
 
 Examples:
 
@@ -177,12 +185,23 @@ be a JSON object with the delegated `requestId` and either `status` or boolean
 {"requestId":"job-42","status":"completed"}
 ```
 
+For example, publish on `simulation/Robot_01/replies/moveBox`. The command topic
+has an extra `robots` segment; `simulation/robots/Robot_01/replies/moveBox` does
+not match the default reply subscription.
+
 - Non-terminal: `started`, `running`, `accepted`
 - Successful terminal: `completed`, `complete`, `succeeded`, `success`
 - Failed terminal: `failed`, `fault`, `faulted`, `error`
 
 On a terminal reply or timeout, the agent records the result and releases the
 reserved resource. Unknown request IDs and unsupported statuses are ignored.
+`OPERATION_TIMEOUT_SECONDS` defaults to 60 seconds and starts after a successful
+HTTP invocation returns. Non-terminal replies do not extend it. Releasing a
+reservation on timeout does not send a stop command to the controller; robot
+state telemetry must still accurately report movement and availability.
+
+Only jobs submitted by the agent are tracked this way. A direct HTTP test of
+the adapter publishes a command without creating an orchestrator job.
 
 ## BaSyx allowlist
 
@@ -200,7 +219,7 @@ target.
 ## Run and troubleshoot
 
 ```powershell
-docker compose up -d --build operation-delegation-service
+docker compose up -d --build mosquitto operation-delegation-service
 docker compose logs -f aas-env operation-delegation-service mosquitto python-agent
 ```
 
@@ -211,3 +230,7 @@ docker compose logs -f aas-env operation-delegation-service mosquitto python-age
   subscription.
 - Job times out: confirm that the controller publishes a terminal reply with
   the exact `requestId` on a topic matching `simulation/+/replies/+`.
+
+The agent may retry transport failures and HTTP 5xx responses with the same
+`requestId`. The adapter does not deduplicate requests; the controller should
+handle repeated IDs to avoid executing a retried command twice.

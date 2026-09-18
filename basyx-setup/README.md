@@ -53,15 +53,10 @@ docker compose up -d --build
 The default stack includes BaSyx, registries, the UI and dashboard, Mosquitto,
 the semantic telemetry bridge, the delegation service, and the Python agent.
 
-The legacy DataBridge remains available through an optional profile:
-
-```powershell
-# Run the old, statically mapped MQTT-to-AAS DataBridge
-docker compose --profile legacy-databridge up -d databridge
-```
-
-Do not run `mqtt-aas-bridge` and the legacy `databridge` as writers for the
-same Properties.
+The optional `legacy-databridge` profile contains old static destinations that
+do not match the bundled AAS models. Follow the
+[legacy bridge guide](databridge/README.md) to remap them before use. Only one
+bridge should write each Property.
 
 Stop the stack with:
 
@@ -106,7 +101,7 @@ OIP publishes QoS 1 JSON messages to `oip/telemetry`:
   ignored.
 
 The bridge recursively discovers nested Properties and patches the selected
-Property's `$value` endpoint. It refreshes its complete routing catalog every
+Property's `$value` endpoint. It rebuilds its routing catalog every
 `REGISTRY_REFRESH_SECONDS`; a route miss also causes an immediate refresh.
 Rejected messages and permanent update failures are reported on
 `oip/fault/telemetry-bridge`.
@@ -116,9 +111,12 @@ contract.
 
 ## Orchestration logic
 
-On startup and every `REGISTRY_REFRESH_SECONDS`, the Python agent builds an
-atomic `SemanticCatalog` from Registry descriptors and fetched Submodels. A
-failed refresh leaves the last complete snapshot active.
+On startup and every `REGISTRY_REFRESH_SECONDS`, the Python agent builds and
+atomically replaces a `SemanticCatalog` from Registry descriptors and fetched
+Submodels. Exceptions during refresh leave the prior snapshot active, but individual
+discovery/fetch failures are recorded as diagnostics and can yield a catalog
+with missing resources or capabilities. Atomic replacement does not guarantee
+that every registered Submodel was fetched successfully.
 
 For each false-to-true semantic trigger transition, the agent:
 
@@ -128,24 +126,45 @@ For each false-to-true semantic trigger transition, the agent:
    target identities from that requirement.
 3. Finds instance resources offering that semantic capability through an IDTA
    `CapabilityRealizedBy` relationship to a Skill.
-4. Rejects Skills that cannot reach both locations, have `Disabled=true`, or
-   lack a discovered Operation with semantic source and target inputs.
+4. Rejects Skills that cannot reach both locations.
 5. Rejects resources unless `AvailableForScheduling=true`; resources with
-   `FaultActive=true` or `IsMoving=true` are also rejected.
-6. Selects the lexicographically stable first runnable resource and reserves it
+   `FaultActive=true`, `IsMoving=true`, or `Skill.Disabled=true` are also rejected.
+6. Checks the remaining candidates for a discovered Operation endpoint and
+   semantic source and target inputs.
+7. Selects the lexicographically stable first runnable resource and reserves it
    atomically inside the single agent process.
-7. Invokes the Operation at its Registry-advertised Submodel endpoint, passing
+8. Invokes the Operation at its Registry-advertised Submodel endpoint, passing
    canonical source/target values and `requestId`/`runId` metadata.
-8. Correlates controller replies by `requestId`, records metrics, and releases
+9. Correlates controller replies by `requestId`, records metrics, and releases
    the resource on completion, failure, timeout, or shutdown.
 
 A true trigger is latched. It must become false before another true update can
-create a new job. A valid job whose reachable resources are temporarily busy,
-faulted, unavailable, or involved in a reservation conflict remains pending.
-It is retried when resource state changes or an execution releases a resource,
-up to `QUEUE_TIMEOUT_SECONDS`. Jobs with no matching capability, no reachable
-resource, or an invalid Operation binding still fail immediately. HTTP
-invocation retries apply only to transport errors and HTTP 5xx responses.
+create a new job. A trigger already true at initial discovery is latched without
+creating a job. A job whose matching, reachable resources are all busy,
+faulted, unavailable, or disabled remains pending, as does a job whose runnable
+candidates are all reserved. Pending jobs are held in memory by the orchestrator
+without assigning or reserving a particular robot. If the only capable,
+reachable robot is moving, the job waits; no command is sent to that robot yet.
+
+Changes to `AvailableForScheduling`, `FaultActive`, or `IsMoving`, an execution
+releasing a resource, or a catalog refresh trigger another scheduling attempt.
+Each retry evaluates all candidates again, so the job can use whichever robot
+is eligible when retried. The pending wait is limited by `QUEUE_TIMEOUT_SECONDS`
+(default: 60 seconds), measured from the job's creation time; retries do not
+reset this timeout. A pending job that exhausts this wait fails with a queue
+timeout.
+
+Jobs with no matching capability or no reachable resource fail immediately.
+Operation bindings are checked only after availability filtering: if all
+reachable candidates are unavailable, the job waits before that validation.
+If candidates pass availability checks but none has a valid Operation binding,
+the job fails. HTTP invocation retries apply only to transport errors and HTTP
+5xx responses.
+
+Resource state is initially seeded from the catalog and then updated by AAS
+state events. Catalog refreshes do not overwrite already cached state values;
+keep telemetry and BaSyx update events flowing. Reservations and jobs are held
+within one agent process and are not recovered after restart.
 
 The agent subscribes to:
 
@@ -213,7 +232,7 @@ values. It deliberately contains no `stationId`, and the adapter performs no
 identity translation. The OIP controller must therefore accept or resolve the
 canonical identities.
 
-The bundled Robot 01 `MoveBox` qualifier matches this endpoint. Some bundled
+The bundled Robot 01 and Robot 02 `MoveBox` qualifiers match this endpoint. The
 non-primary conveyor and move-home qualifiers still use older resource-based
 paths that the adapter does not expose; these limitations are listed in the
 delegation guide.
@@ -224,19 +243,29 @@ for endpoint and payload details.
 
 ## Key environment variables
 
-The Compose file supplies the main defaults. Useful overrides include:
+These settings are read from each process's environment:
 
 | Component | Variables |
 |---|---|
 | Python agent | `MQTT_HOST`, `MQTT_PORT`, `MQTT_TOPIC`, `OPERATION_REPLY_TOPIC`, `AAS_REGISTRY_URL`, `SUBMODEL_REGISTRY_URL`, `REGISTRY_REFRESH_SECONDS`, `SEMANTIC_DISCOVERY_DIAGNOSTIC`, `HTTP_TIMEOUT_SECONDS`, `OPERATION_TIMEOUT_SECONDS`, `QUEUE_TIMEOUT_SECONDS`, `INVOKE_RETRY_COUNT`, `ORCHESTRATOR_LOG_CSV_PATH`, `MEASUREMENT_RUN_ID` |
 | Telemetry bridge | `MQTT_HOST`, `MQTT_PORT`, `MQTT_TELEMETRY_TOPIC`, `AAS_REGISTRY_URL`, `SUBMODEL_REGISTRY_URL`, `REGISTRY_REFRESH_SECONDS`, `HTTP_TIMEOUT_SECONDS`, `AAS_UPDATE_RETRY_COUNT`, `AAS_RETRY_BASE_SECONDS`, `MQTT_RECONNECT_SECONDS`, `ASSET_QUEUE_SIZE`, `EVENT_DEDUP_WINDOW`, `FAULT_TOPIC` |
 
+The current Compose file interpolates `MONGO_PASSWORD`, `MEASUREMENT_RUN_ID`,
+`QUEUE_TIMEOUT_SECONDS`, and `OPERATION_TIMEOUT_SECONDS` from `.env`. Other
+overrides require editing the service `environment` block or a Compose override
+file; adding them to `.env` alone does not pass them into containers. Refer to
+[docker-compose.yml](docker-compose.yml) for the deployed settings and the
+[bridge configuration table](mqtt-aas-bridge/README.md#configuration) for its
+process defaults.
+
 `REGISTRY_REFRESH_SECONDS <= 0` disables periodic refresh in the Python agent.
 The telemetry bridge clamps its refresh interval to at least 0.1 seconds.
 
-Orchestration outcomes are appended to `../orchestrator_logs.csv`. If that file
-has an older header, the agent preserves it and writes the current schema to a
-`.phase2.csv` sibling.
+Compose mounts orchestration outcomes at `../orchestrator_logs.csv`. If that file
+has an older header, the agent preserves it and writes to
+`/app/orchestrator_logs.phase2.csv` instead. That fallback is inside the container
+and is not covered by the current single-file mount; copy it out before
+recreating the container, or mount a directory and set the log path inside it.
 
 ## AAS packages and legacy telemetry
 
@@ -249,7 +278,12 @@ station-specific simulation topics and writes fixed AAS paths. See
 
 ## Verification
 
-Run the unit tests without starting Compose:
+For local tests, match the container versions: Python 3.12 for the agent and
+3.13 for the bridge. Install each service's `requirements.txt` in its own
+virtual environment; they pin different `aiomqtt` versions. Java 17 and Maven
+are needed for the adapter tests.
+
+From `basyx-setup`, using the corresponding environment for each Python command:
 
 ```powershell
 python -m unittest discover -s python-agent -p "test_*.py"

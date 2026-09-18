@@ -5,13 +5,18 @@ configuration. It is retained for comparison and compatibility; the default
 runtime uses `mqtt-aas-bridge`, which discovers routes from AAS semantics and
 Registry descriptors.
 
-This configuration does not use OPC UA.
+This configuration does not use OPC UA. All eight configured destinations
+reference old Submodel IDs absent from the current bundled `../aas/*.aasx`
+models. Remap the destinations to your deployed Submodels and Property paths
+before using this bridge; enabling the profile alone is insufficient.
 
 ## Enable the legacy bridge
 
-From the parent `basyx-setup` directory:
+After remapping, run from the parent `basyx-setup` directory. If replacing the
+semantic bridge for these same Properties, stop it first:
 
 ```powershell
+docker compose stop mqtt-aas-bridge
 docker compose --profile legacy-databridge up -d databridge
 docker compose logs -f databridge
 ```
@@ -22,7 +27,7 @@ Mosquitto and the AAS Environment are started as dependencies.
 Do not run this bridge and `mqtt-aas-bridge` as writers for the same
 Properties, because both will update AAS state independently.
 
-## Current static mappings
+## Configured legacy mappings
 
 `mqttconsumer.json` defines eight station-specific input topics:
 
@@ -53,14 +58,16 @@ a DataBridge restart.
   container)
 
 The JSONata expressions accept either a primitive or an object containing the
-expected signal field. Boolean-like strings are normalized; speed is converted
-to a number.
+expected signal field. Primitive payloads pass through unchanged. Within object
+fields, `"true"`/`"false"` strings are normalized for boolean signals; other
+strings are converted with `$number()`. Speed strings also use `$number()`.
 
 ## Change a mapping
 
 1. Add or edit the MQTT source in `mqttconsumer.json`.
 2. Add or edit its JSONata transformer and expression.
-3. Add the exact Submodel endpoint and `idShortPath` in `aasserver.json`.
+3. Set the exact deployed Submodel endpoint and `idShortPath` in
+   `aasserver.json`; replace the legacy IDs rather than copying them.
 4. Connect those IDs in `routes.json` with `"trigger": "event"`.
 5. Restart the profiled service:
 

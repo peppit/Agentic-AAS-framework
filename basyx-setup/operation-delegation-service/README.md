@@ -34,44 +34,21 @@ The preferred inputs are AAS Operation variables with semantic IDs:
 - `urn:agent-aas:semantics:SourceTransferLocation:1`
 - `urn:agent-aas:semantics:TargetTransferLocation:1`
 
-The variable `idShort` values are not significant when those semantics are
-present. For compatibility, variables or `params` named `SourcePosition` and
-`TargetPosition` are also accepted.
+The adapter accepts `inputArguments` or `inputVariables`; `inputVariables`
+takes precedence when both are present. Variable `idShort` values are not
+significant when the expected semantics are present. Missing semantic values
+fall back to top-level fields, named variables, or `params` entries named
+`SourcePosition` and `TargetPosition`.
 
-Example request:
+See the [delegation guide](../README-OPERATION-DELEGATION.md#movebox-contract)
+for the complete semantic AAS request. A direct adapter request can use:
 
 ```json
 {
-  "inputArguments": [
-    {
-      "value": {
-        "idShort": "Source",
-        "value": "urn:agent-aas:asset-instance:conveyor01",
-        "semanticId": {
-          "type": "ExternalReference",
-          "keys": [{
-            "type": "GlobalReference",
-            "value": "urn:agent-aas:semantics:SourceTransferLocation:1"
-          }]
-        }
-      }
-    },
-    {
-      "value": {
-        "idShort": "Target",
-        "value": "urn:agent-aas:entity:oip-factory01:pallet01",
-        "semanticId": {
-          "type": "ExternalReference",
-          "keys": [{
-            "type": "GlobalReference",
-            "value": "urn:agent-aas:semantics:TargetTransferLocation:1"
-          }]
-        }
-      }
-    },
-    {"value":{"idShort":"requestId","value":"job-42"}},
-    {"value":{"idShort":"runId","value":"experiment-7"}}
-  ]
+  "SourcePosition": "urn:agent-aas:asset-instance:conveyor01",
+  "TargetPosition": "urn:agent-aas:entity:oip-factory01:pallet01",
+  "requestId": "job-42",
+  "runId": "experiment-7"
 }
 ```
 
@@ -96,10 +73,23 @@ publishes an empty string.
 
 ## Other input formats
 
-Conveyor and move-home endpoints accept BaSyx `inputVariables`, a JSON object
-with the expected field or `value`, a JSON array of wrapped variables, or a
-primitive. Recognized true values are `true`, `1`, and `on`; all other parsed
-boolean literals become false. Numeric values must be parseable as a double.
+For conveyor and move-home calls, prefer explicit JSON objects such as
+`{"running":true}`, `{"speed":55.0}`, or `{"move":true}`, with an optional
+`requestId`. These endpoints also accept `value`, wrapped `inputVariables`,
+arrays of wrapped variables, or primitive bodies.
+
+The value parsers do not read `inputArguments`. An `inputArguments`-only body
+causes speed to return HTTP 500 and running/move-home to publish `false`.
+Within variable arrays, the parser uses the expected name first, then the first
+wrapped value; an empty array defaults to `false` or speed `0.0`.
+
+For boolean object fields and wrapped values, JSON booleans are preserved,
+numbers are true when their Java integer conversion is nonzero, and trimmed
+strings `true`, `1`, and `on` are true (case-insensitive). Other strings and null
+become false. Thus `{"running":2}` is true. Primitive boolean bodies use literal
+text matching instead: `true` and `1` are true, but `2` and the quoted JSON
+string `"true"` are false. Prefer JSON booleans in named fields to avoid this
+format-dependent behavior. Speed values must parse as a double.
 
 The station path parameter is authoritative for station-addressed endpoints.
 
@@ -129,6 +119,11 @@ Operation completion is reported separately by the controller. The Python
 orchestrator expects replies carrying the same `requestId` on a topic matching
 `simulation/+/replies/+`.
 
+This service does not reserve robots, check movement, track completion, or
+deduplicate `requestId` values. Direct HTTP requests bypass the orchestrator's
+scheduling checks. Controller handling of repeated IDs is needed if callers
+retry a command.
+
 ## Configuration
 
 Defaults in `src/main/resources/application.yml`:
@@ -152,18 +147,21 @@ environment-variable binding.
 
 ## Build, test, and run
 
-Java 17 is required for a local build.
+Use Java 17 and Maven for a local build. From this service directory:
 
 ```powershell
 mvn test
 mvn clean package
-java -jar target/operation-delegation-service-1.0.0.jar
+java -jar target/operation-delegation-service-1.0.0.jar --simulation.mqtt.broker-url=tcp://localhost:1883
 ```
+
+The local run command assumes a broker is listening on host port 1883. The
+default hostname `mosquitto` is for the Compose network.
 
 From the parent `basyx-setup` directory:
 
 ```powershell
-docker compose up -d --build operation-delegation-service
+docker compose up -d --build mosquitto operation-delegation-service
 docker compose logs -f operation-delegation-service
 ```
 
