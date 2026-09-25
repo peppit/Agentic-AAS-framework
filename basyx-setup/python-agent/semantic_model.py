@@ -77,7 +77,7 @@ class ProcessJob:
     source_id: str
     target_id: str
     created_at: float = field(default_factory=time.monotonic)
-    received_at_ms: int | None = None
+    request_received_unix_us: int | None = None
     selected_resource_id: str | None = None
     candidate_count: int = 0
     reachable_candidate_count: int = 0
@@ -85,6 +85,10 @@ class ProcessJob:
     matching_ms: float = 0.0
     reservation_ms: float = 0.0
     invocation_ms: float = 0.0
+    faulted_resource_id: str | None = None
+    t1_unix_us: int | None = None
+    t2_unix_us: int | None = None
+    tD_unix_us: int | None = None
 
 
 @dataclass

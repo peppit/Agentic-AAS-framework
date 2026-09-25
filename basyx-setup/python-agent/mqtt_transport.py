@@ -73,7 +73,7 @@ async def run_agent(config: AgentConfig) -> None:
                                 element_token,
                                 payload,
                                 topic,
-                                int(time.time() * 1000),
+                                time.time_ns() // 1_000,
                             )
             except MqttError as exc:
                 print(

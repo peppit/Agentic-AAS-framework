@@ -13,7 +13,7 @@ import httpx
 from aas_access import invoke_operation
 from catalog_runtime import CatalogManager
 from config_models import AgentConfig, parse_bool_value
-from research_metrics import SemanticMetricsLogger
+from research_metrics import ResourceSubstitutionLogger, SemanticMetricsLogger
 from reservation import ReservationManager
 from semantic_catalog import SemanticCatalog
 from semantic_model import (
@@ -100,6 +100,11 @@ class FactoryOrchestrator:
         self.run_id = config.measurement_run_id.strip() or str(uuid.uuid4())
         self.metrics = SemanticMetricsLogger(
             config.orchestrator_log_csv_path, self.run_id
+        )
+        self.fault_t1_by_resource: dict[str, int] = {}
+        self.resource_sub_metrics = ResourceSubstitutionLogger(
+            config.resource_sub_csv_path,
+            self.run_id,
         )
 
     async def initialize(self) -> None:
@@ -216,7 +221,7 @@ class FactoryOrchestrator:
         element_token: str,
         payload: str,
         mqtt_topic: str = "",
-        received_at_ms: int | None = None,
+        received_at_unix_us: int | None = None,
     ) -> None:
         catalog = await self.catalog_manager.snapshot()
         definition = self._resolve_state_definition(
@@ -241,6 +246,24 @@ class FactoryOrchestrator:
         asset_state = self.state.setdefault(definition.owner_asset_id, {})
         previous_value = asset_state.get(definition.semantic_id)
         asset_state[definition.semantic_id] = value
+
+        if (
+            definition.semantic_id == FAULT_ACTIVE
+            and value is True
+            and previous_value is not True
+        ):
+            t1_unix_us = time.time_ns() // 1_000
+            self.fault_t1_by_resource[
+                definition.owner_asset_id
+            ] = t1_unix_us
+            print(
+                "[RECOVERY] Fault accepted "
+                f"resource={definition.owner_asset_id} "
+                f"t1_unix_us={t1_unix_us}"
+            )
+        elif definition.semantic_id == FAULT_ACTIVE and value is False:
+            self.fault_t1_by_resource.pop(definition.owner_asset_id, None)
+
         if (
             definition.semantic_id
             in {AVAILABLE_FOR_SCHEDULING, FAULT_ACTIVE, IS_MOVING}
@@ -264,7 +287,7 @@ class FactoryOrchestrator:
 
         self.latched_triggers.add(trigger_key)
         for requirement in requirements:
-            job = self._create_job(requirement, received_at_ms)
+            job = self._create_job(requirement, received_at_unix_us)
             if job is None:
                 continue
             await self.job_queue.put(job)
@@ -276,7 +299,7 @@ class FactoryOrchestrator:
     @staticmethod
     def _create_job(
         requirement: ProcessRequirement,
-        received_at_ms: int | None = None,
+        received_at_unix_us: int | None = None,
     ) -> ProcessJob | None:
         if (
             not requirement.trigger_asset_id
@@ -299,7 +322,7 @@ class FactoryOrchestrator:
             required_capability_semantic=required_semantic,
             source_id=requirement.source_id,
             target_id=requirement.target_id,
-            received_at_ms=received_at_ms,
+            request_received_unix_us=received_at_unix_us,
         )
 
     async def start_worker(self) -> None:
@@ -496,6 +519,18 @@ class FactoryOrchestrator:
 
         offer, binding = select_candidate(runnable, selected_resource_id)
         job.selected_resource_id = selected_resource_id
+        job.t2_unix_us = time.time_ns() // 1_000
+
+        preferred_resource_id = reachable[0].owner_asset_id
+        is_resource_substitution = (
+            selected_resource_id != preferred_resource_id
+            and self._state_value(preferred_resource_id, FAULT_ACTIVE) is True
+        )
+        if is_resource_substitution:
+            job.faulted_resource_id = preferred_resource_id
+            job.t1_unix_us = self.fault_t1_by_resource.get(
+                job.faulted_resource_id
+            )
         execution = ActiveExecution(job=job, binding=binding)
         self.active_jobs_by_request_id[job.job_id] = execution
         print(
@@ -506,6 +541,11 @@ class FactoryOrchestrator:
         )
 
         invocation_started = time.perf_counter()
+        # Dispatch boundary: everything before this timestamp belongs to the
+        # BaSyx-side request handling and resource-selection path. Persist the
+        # measurement only after invoke_operation returns so metrics file I/O
+        # cannot inflate the measured dispatch interval.
+        job.tD_unix_us = time.time_ns() // 1_000
         try:
             response = await invoke_operation(
                 binding,
@@ -525,11 +565,15 @@ class FactoryOrchestrator:
             )
         except Exception as exc:
             job.invocation_ms = (time.perf_counter() - invocation_started) * 1000
+            if is_resource_substitution:
+                await self.resource_sub_metrics.record_selection(job)
             await self._finish_execution(
                 execution, "failed", f"HTTP invocation failure: {exc}"
             )
             return
         job.invocation_ms = (time.perf_counter() - invocation_started) * 1000
+        if is_resource_substitution:
+            await self.resource_sub_metrics.record_selection(job)
 
         # A very fast completion reply can finish the job while POST /invoke is
         # still returning. Do not recreate its lifecycle in that case.

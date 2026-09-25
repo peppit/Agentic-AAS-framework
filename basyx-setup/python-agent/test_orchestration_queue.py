@@ -1,8 +1,10 @@
 import asyncio
+import csv
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from config_models import AgentConfig
 from orchestration import FactoryOrchestrator
@@ -13,6 +15,7 @@ from semantic_model import (
     OperationBinding,
     OperationParameter,
     ProcessJob,
+    ResourceStateDefinition,
 )
 from semantics import (
     AVAILABLE_FOR_SCHEDULING,
@@ -91,6 +94,9 @@ class PendingJobTests(unittest.IsolatedAsyncioTestCase):
             orchestrator_log_csv_path=str(
                 Path(self.temp_dir.name) / "orchestrator.csv"
             ),
+            resource_sub_csv_path=str(
+                Path(self.temp_dir.name) / "resource_sub.csv"
+            ),
         )
         orchestrator = FactoryOrchestrator(
             config,
@@ -144,6 +150,112 @@ class PendingJobTests(unittest.IsolatedAsyncioTestCase):
         orchestrator.metrics.record.assert_awaited_once_with(
             job, "failed", "candidates but none reachable"
         )
+
+    async def test_fault_transition_records_and_clears_t1(self) -> None:
+        catalog = build_catalog()
+        fault_ref = ElementRef("urn:test:robot02:state", "FaultActive")
+        catalog.asset_by_submodel_id[fault_ref.submodel_id] = object()
+        catalog.state_elements_by_ref[fault_ref] = ResourceStateDefinition(
+            owner_asset_id=ROBOT_ID,
+            semantic_id=FAULT_ACTIVE,
+            element_ref=fault_ref,
+            current_value=False,
+        )
+        orchestrator = self.orchestrator(catalog)
+        orchestrator.state[ROBOT_ID][FAULT_ACTIVE] = False
+
+        with patch("orchestration.time.time_ns", return_value=1_234_567_000):
+            await orchestrator.handle_event(
+                fault_ref.submodel_id,
+                fault_ref.id_short_path,
+                "true",
+            )
+
+        self.assertEqual(orchestrator.fault_t1_by_resource[ROBOT_ID], 1_234_567)
+
+        await orchestrator.handle_event(
+            fault_ref.submodel_id,
+            fault_ref.id_short_path,
+            "false",
+        )
+        self.assertNotIn(ROBOT_ID, orchestrator.fault_t1_by_resource)
+
+    async def test_faulted_preferred_resource_records_t2_selection(self) -> None:
+        catalog = build_catalog()
+        preferred_id = "urn:test:robot01"
+        preferred_skill = ElementRef(
+            "urn:test:robot01:control", "Skills.MoveBox"
+        )
+        catalog.capabilities_by_semantic_id[CAPABILITY].append(
+            CapabilityOffer(
+                owner_asset_id=preferred_id,
+                capability_ref=ElementRef(
+                    "urn:test:robot01:capability", "Transport"
+                ),
+                semantic_ids={CAPABILITY},
+                skill_ref=preferred_skill,
+            )
+        )
+        catalog.operation_by_skill_ref[preferred_skill] = OperationBinding(
+            owner_asset_id=preferred_id,
+            skill_ref=preferred_skill,
+            operation_ref=ElementRef(
+                "urn:test:robot01:execution", "MoveBox"
+            ),
+            submodel_endpoint="http://example.test/preferred-submodel",
+            parameters=[
+                OperationParameter(
+                    {SOURCE_TRANSFER_LOCATION}, "Source", "xs:string"
+                ),
+                OperationParameter(
+                    {TARGET_TRANSFER_LOCATION}, "Target", "xs:string"
+                ),
+            ],
+        )
+        catalog.reachability_by_skill_ref[preferred_skill] = {
+            SOURCE_ID,
+            TARGET_ID,
+        }
+
+        orchestrator = self.orchestrator(catalog)
+        orchestrator.state[preferred_id] = {
+            AVAILABLE_FOR_SCHEDULING: True,
+            FAULT_ACTIVE: True,
+            IS_MOVING: False,
+        }
+        orchestrator.state[ROBOT_ID][IS_MOVING] = False
+        orchestrator.fault_t1_by_resource[preferred_id] = 1_000_000
+        job = build_job()
+        job.request_received_unix_us = 1_200_000
+
+        with (
+            patch("orchestration.time.time_ns", return_value=1_250_000_000),
+            patch(
+                "orchestration.invoke_operation",
+                new=AsyncMock(return_value=SimpleNamespace(status_code=200)),
+            ),
+        ):
+            await orchestrator.process_job(job)
+
+        self.assertEqual(job.faulted_resource_id, preferred_id)
+        self.assertEqual(job.selected_resource_id, ROBOT_ID)
+        self.assertEqual(job.t1_unix_us, 1_000_000)
+        self.assertEqual(job.t2_unix_us, 1_250_000)
+        self.assertEqual(job.tD_unix_us, 1_250_000)
+
+        with orchestrator.resource_sub_metrics.path.open(
+            newline="", encoding="utf-8"
+        ) as stream:
+            rows = list(csv.DictReader(stream))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["faulted_resource_id"], preferred_id)
+        self.assertEqual(rows[0]["replacement_resource_id"], ROBOT_ID)
+        self.assertEqual(rows[0]["request_received_unix_us"], "1200000")
+        self.assertEqual(rows[0]["tD_unix_us"], "1250000")
+        self.assertEqual(rows[0]["idle_wait_ms"], "200.000")
+        self.assertEqual(rows[0]["selection_ms"], "50.000")
+
+        await orchestrator.close()
 
 
 if __name__ == "__main__":

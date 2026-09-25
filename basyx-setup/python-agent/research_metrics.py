@@ -27,6 +27,19 @@ METRIC_HEADERS = [
     "failure_reason",
 ]
 
+RESOURCE_SUB_HEADERS = [
+    "run_id",
+    "request_id",
+    "faulted_resource_id",
+    "replacement_resource_id",
+    "t1_unix_us",
+    "request_received_unix_us",
+    "t2_unix_us",
+    "tD_unix_us",
+    "idle_wait_ms",
+    "selection_ms",
+]
+
 
 class SemanticMetricsLogger:
     def __init__(self, path: str, run_id: str) -> None:
@@ -83,3 +96,67 @@ class SemanticMetricsLogger:
             }
             with self.path.open("a", newline="", encoding="utf-8") as stream:
                 csv.DictWriter(stream, fieldnames=METRIC_HEADERS).writerow(row)
+
+
+class ResourceSubstitutionLogger:
+    """Record fault observation and committed replacement selection."""
+
+    def __init__(self, path: str, run_id: str) -> None:
+        self.path = Path(path)
+        self.run_id = run_id
+        self._lock = asyncio.Lock()
+        self._logged_requests: set[str] = set()
+        self._ensure_file()
+
+    def _ensure_file(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        expected = ",".join(RESOURCE_SUB_HEADERS)
+        if self.path.exists() and self.path.stat().st_size:
+            with self.path.open("r", encoding="utf-8") as stream:
+                actual = stream.readline().strip()
+            if actual != expected:
+                raise RuntimeError(
+                    f"Unexpected CSV header in {self.path}. "
+                    "Move or rename the previous log before starting a new run. "
+                    f"Expected {expected!r}, got {actual!r}."
+                )
+            return
+
+        with self.path.open("w", newline="", encoding="utf-8") as stream:
+            csv.DictWriter(
+                stream, fieldnames=RESOURCE_SUB_HEADERS
+            ).writeheader()
+
+    async def record_selection(self, job: ProcessJob) -> None:
+        if (
+            job.t1_unix_us is None
+            or job.request_received_unix_us is None
+            or job.t2_unix_us is None
+            or job.tD_unix_us is None
+        ):
+            return
+
+        async with self._lock:
+            if job.job_id in self._logged_requests:
+                return
+            self._logged_requests.add(job.job_id)
+            row = {
+                "run_id": self.run_id,
+                "request_id": job.job_id,
+                "faulted_resource_id": job.faulted_resource_id or "",
+                "replacement_resource_id": job.selected_resource_id or "",
+                "t1_unix_us": job.t1_unix_us,
+                "request_received_unix_us": job.request_received_unix_us,
+                "t2_unix_us": job.t2_unix_us,
+                "tD_unix_us": job.tD_unix_us,
+                "idle_wait_ms": (
+                    f"{(job.request_received_unix_us - job.t1_unix_us) / 1000:.3f}"
+                ),
+                "selection_ms": (
+                    f"{(job.t2_unix_us - job.request_received_unix_us) / 1000:.3f}"
+                ),
+            }
+            with self.path.open("a", newline="", encoding="utf-8") as stream:
+                csv.DictWriter(
+                    stream, fieldnames=RESOURCE_SUB_HEADERS
+                ).writerow(row)

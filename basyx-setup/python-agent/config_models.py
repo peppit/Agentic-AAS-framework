@@ -43,6 +43,10 @@ class AgentConfig:
         "ORCHESTRATOR_LOG_CSV_PATH",
         str(Path(__file__).resolve().parent / "orchestrator_logs.csv"),
     )
+    resource_sub_csv_path: str = os.getenv(
+        "RESOURCE_SUB_CSV_PATH",
+        str(Path(__file__).resolve().parent / "resource_sub.csv"),
+    )
     measurement_run_id: str = os.getenv("MEASUREMENT_RUN_ID", "1")
 
 

@@ -192,9 +192,11 @@ services:
       - REGISTRY_REFRESH_SECONDS=5
       - SEMANTIC_DISCOVERY_DIAGNOSTIC=true
       - ORCHESTRATOR_LOG_CSV_PATH=/app/orchestrator_logs.csv
+      - RESOURCE_SUB_CSV_PATH=/app/resource_sub.csv
       - MEASUREMENT_RUN_ID=${MEASUREMENT_RUN_ID:-}
     volumes:
       - ../orchestrator_logs.csv:/app/orchestrator_logs.csv
+      - ../resource_sub.csv:/app/resource_sub.csv
 
     restart: always
     depends_on:
