@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 from config_models import AgentConfig
 from orchestration import FactoryOrchestrator
+from research_metrics import SemanticMetricsLogger
 from semantic_catalog import SemanticCatalog
 from semantic_model import (
     CapabilityOffer,
@@ -151,7 +152,7 @@ class PendingJobTests(unittest.IsolatedAsyncioTestCase):
             job, "failed", "candidates but none reachable"
         )
 
-    async def test_fault_transition_records_and_clears_t1(self) -> None:
+    async def test_fault_transition_updates_resource_state(self) -> None:
         catalog = build_catalog()
         fault_ref = ElementRef("urn:test:robot02:state", "FaultActive")
         catalog.asset_by_submodel_id[fault_ref.submodel_id] = object()
@@ -164,23 +165,21 @@ class PendingJobTests(unittest.IsolatedAsyncioTestCase):
         orchestrator = self.orchestrator(catalog)
         orchestrator.state[ROBOT_ID][FAULT_ACTIVE] = False
 
-        with patch("orchestration.time.time_ns", return_value=1_234_567_000):
-            await orchestrator.handle_event(
-                fault_ref.submodel_id,
-                fault_ref.id_short_path,
-                "true",
-            )
-
-        self.assertEqual(orchestrator.fault_t1_by_resource[ROBOT_ID], 1_234_567)
+        await orchestrator.handle_event(
+            fault_ref.submodel_id,
+            fault_ref.id_short_path,
+            "true",
+        )
+        self.assertTrue(orchestrator.state[ROBOT_ID][FAULT_ACTIVE])
 
         await orchestrator.handle_event(
             fault_ref.submodel_id,
             fault_ref.id_short_path,
             "false",
         )
-        self.assertNotIn(ROBOT_ID, orchestrator.fault_t1_by_resource)
+        self.assertFalse(orchestrator.state[ROBOT_ID][FAULT_ACTIVE])
 
-    async def test_faulted_preferred_resource_records_t2_selection(self) -> None:
+    async def test_selection_records_t3_and_dispatch_records_t4(self) -> None:
         catalog = build_catalog()
         preferred_id = "urn:test:robot01"
         preferred_skill = ElementRef(
@@ -224,9 +223,9 @@ class PendingJobTests(unittest.IsolatedAsyncioTestCase):
             IS_MOVING: False,
         }
         orchestrator.state[ROBOT_ID][IS_MOVING] = False
-        orchestrator.fault_t1_by_resource[preferred_id] = 1_000_000
         job = build_job()
-        job.request_received_unix_us = 1_200_000
+        job.t1_update_notification_received_unix_us = 1_000_000
+        job.t2_orchestrator_handling_started_unix_us = 1_200_000
 
         with (
             patch("orchestration.time.time_ns", return_value=1_250_000_000),
@@ -237,25 +236,38 @@ class PendingJobTests(unittest.IsolatedAsyncioTestCase):
         ):
             await orchestrator.process_job(job)
 
-        self.assertEqual(job.faulted_resource_id, preferred_id)
         self.assertEqual(job.selected_resource_id, ROBOT_ID)
-        self.assertEqual(job.t1_unix_us, 1_000_000)
-        self.assertEqual(job.t2_unix_us, 1_250_000)
-        self.assertEqual(job.tD_unix_us, 1_250_000)
-
-        with orchestrator.resource_sub_metrics.path.open(
-            newline="", encoding="utf-8"
-        ) as stream:
-            rows = list(csv.DictReader(stream))
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["faulted_resource_id"], preferred_id)
-        self.assertEqual(rows[0]["replacement_resource_id"], ROBOT_ID)
-        self.assertEqual(rows[0]["request_received_unix_us"], "1200000")
-        self.assertEqual(rows[0]["tD_unix_us"], "1250000")
-        self.assertEqual(rows[0]["idle_wait_ms"], "200.000")
-        self.assertEqual(rows[0]["selection_ms"], "50.000")
+        self.assertEqual(job.t3_resource_selected_reserved_unix_us, 1_250_000)
+        self.assertEqual(job.t4_operation_dispatch_started_unix_us, 1_250_000)
 
         await orchestrator.close()
+
+    async def test_orchestrator_csv_records_basyx_timestamps(self) -> None:
+        path = Path(self.temp_dir.name) / "timestamp_metrics.csv"
+        logger = SemanticMetricsLogger(str(path), "test-run")
+        job = build_job()
+        job.t1_update_notification_received_unix_us = 1_000_000
+        job.t2_orchestrator_handling_started_unix_us = 1_001_000
+        job.t3_resource_selected_reserved_unix_us = 1_006_000
+        job.t4_operation_dispatch_started_unix_us = 1_008_000
+
+        await logger.record(job, "completed")
+
+        with path.open(newline="", encoding="utf-8") as stream:
+            row = next(csv.DictReader(stream))
+        self.assertEqual(
+            row["t1_update_notification_received_unix_us"], "1000000"
+        )
+        self.assertEqual(
+            row["t2_orchestrator_handling_started_unix_us"], "1001000"
+        )
+        self.assertEqual(
+            row["t3_resource_selected_reserved_unix_us"], "1006000"
+        )
+        self.assertEqual(
+            row["t4_operation_dispatch_started_unix_us"], "1008000"
+        )
+        self.assertNotIn("t1_to_t2_ms", row)
 
 
 if __name__ == "__main__":

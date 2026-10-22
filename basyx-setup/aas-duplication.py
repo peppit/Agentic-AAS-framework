@@ -1,4 +1,4 @@
-"""Create a station's conveyor, robot and factory model from an existing station.
+"""Create a station's conveyor, robot, pallet and factory model from a station.
 
 The instance packages contain shared IDTA/eCl@ss identifiers as well as
 station-specific identifiers. Only the latter are replaced here so that the
@@ -7,15 +7,19 @@ clones continue to refer to the same type AASs and semantic definitions.
 Example:
     python aas-duplication.py 2
     python aas-duplication.py 16 --source-station 1 --force
+    python aas-duplication.py 17 --repository-url http://localhost:8081
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import codecs
 import copy
+import json
 import os
 import tempfile
+import urllib.request
 import zipfile
 from collections import Counter
 from collections.abc import Mapping
@@ -73,12 +77,16 @@ def build_replacement_plans(
         f"Robot{source}": f"Robot{target}",
         f"robot-{source}": f"robot-{target}",
         f"Robot_{source}": f"Robot_{target}",
-        # A robot clone belongs to the corresponding conveyor station. The
-        # factory pallet remains shared, so its pallet01 reference is retained.
+        # Each robot serves only its own station's conveyor and pallet. Keep
+        # both CanReach relationships aligned with the cloned factory model.
         f"urn:agent-aas:asset-instance:conveyor{source}": (
             f"urn:agent-aas:asset-instance:conveyor{target}"
         ),
         f"MoveBoxConveyor{source}": f"MoveBoxConveyor{target}",
+        f"urn:agent-aas:entity:oip-factory01:pallet{source}": (
+            f"urn:agent-aas:entity:oip-factory01:pallet{target}"
+        ),
+        f"MoveBoxPallet{source}": f"MoveBoxPallet{target}",
     }
 
     return {"conveyor": conveyor, "robot": robot}
@@ -328,10 +336,20 @@ def _update_factory_xml(
             f"urn:agent-aas:asset-instance:conveyor{target}"
         ),
     }
+    pallet_replacements = {
+        f"Pallet{source}": f"Pallet{target}",
+        f"urn:agent-aas:entity:oip-factory01:pallet{source}": (
+            f"urn:agent-aas:entity:oip-factory01:pallet{target}"
+        ),
+    }
     requirement_replacements = {
         f"Transfer{source}": f"Transfer{target}",
         f"urn:agent-aas:asset-instance:conveyor{source}": (
             f"urn:agent-aas:asset-instance:conveyor{target}"
+        ),
+        f"Pallet{source}": f"Pallet{target}",
+        f"urn:agent-aas:entity:oip-factory01:pallet{source}": (
+            f"urn:agent-aas:entity:oip-factory01:pallet{target}"
         ),
     }
 
@@ -365,6 +383,14 @@ def _update_factory_xml(
     )
     _upsert_factory_element(
         statements,
+        "entity",
+        f"Pallet{source}",
+        f"Pallet{target}",
+        pallet_replacements,
+        overwrite=overwrite,
+    )
+    _upsert_factory_element(
+        statements,
         "relationshipElement",
         f"HasPartRobot{source}",
         f"HasPartRobot{target}",
@@ -377,6 +403,14 @@ def _update_factory_xml(
         f"HasPartConveyor{source}",
         f"HasPartConveyor{target}",
         conveyor_replacements,
+        overwrite=overwrite,
+    )
+    _upsert_factory_element(
+        statements,
+        "relationshipElement",
+        f"HasPartPallet{source}",
+        f"HasPartPallet{target}",
+        pallet_replacements,
         overwrite=overwrite,
     )
     _upsert_factory_element(
@@ -470,12 +504,269 @@ def update_factory_package(
             temp_path.unlink(missing_ok=True)
 
 
+FACTORY_HIERARCHY_ID = (
+    "urn:agent-aas:oip-factory01:hierarchical-structures"
+)
+FACTORY_REQUIREMENTS_ID = (
+    "urn:agent-aas:oip-factory01:process-requirements"
+)
+
+
+def _replace_json_strings(value: object, replacements: Mapping[str, str]) -> object:
+    """Deep-copy JSON-compatible data while replacing identifier fragments."""
+    ordered = sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True)
+    if isinstance(value, str):
+        for old, new in ordered:
+            value = value.replace(old, new)
+        return value
+    if isinstance(value, list):
+        return [_replace_json_strings(item, replacements) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _replace_json_strings(item, replacements)
+            for key, item in value.items()
+        }
+    return copy.deepcopy(value)
+
+
+def _upsert_json_element(
+    elements: list[dict[str, object]],
+    model_type: str,
+    source_id_short: str,
+    target_id_short: str,
+    replacements: Mapping[str, str],
+    *,
+    overwrite: bool,
+) -> None:
+    source = next(
+        (
+            element
+            for element in elements
+            if element.get("modelType") == model_type
+            and element.get("idShort") == source_id_short
+        ),
+        None,
+    )
+    if source is None:
+        raise ValueError(
+            f"live factory element {model_type}/{source_id_short} was not found"
+        )
+
+    target_index = next(
+        (
+            index
+            for index, element in enumerate(elements)
+            if element.get("modelType") == model_type
+            and element.get("idShort") == target_id_short
+        ),
+        None,
+    )
+    cloned = _replace_json_strings(source, replacements)
+    if not isinstance(cloned, dict):
+        raise TypeError("cloned factory element is not a JSON object")
+
+    if target_index is not None:
+        if not overwrite:
+            raise FileExistsError(
+                f"live factory element already exists: {target_id_short} "
+                "(use --force to replace it)"
+            )
+        elements[target_index] = cloned
+        return
+
+    same_type_indices = [
+        index
+        for index, element in enumerate(elements)
+        if element.get("modelType") == model_type
+    ]
+    insertion_index = max(same_type_indices) + 1 if same_type_indices else len(elements)
+    elements.insert(insertion_index, cloned)
+
+
+def update_factory_repository_models(
+    hierarchy: dict[str, object],
+    requirements: dict[str, object],
+    source_station: int,
+    target_station: int,
+    *,
+    overwrite: bool,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Build updated live-repository JSON for one factory station."""
+    hierarchy = copy.deepcopy(hierarchy)
+    requirements = copy.deepcopy(requirements)
+    source = f"{source_station:02d}"
+    target = f"{target_station:02d}"
+
+    hierarchy_elements = hierarchy.get("submodelElements")
+    requirements_elements = requirements.get("submodelElements")
+    if not isinstance(hierarchy_elements, list) or not isinstance(
+        requirements_elements, list
+    ):
+        raise ValueError("live factory submodelElements container was not found")
+    factory = next(
+        (
+            element
+            for element in hierarchy_elements
+            if isinstance(element, dict) and element.get("idShort") == "OIPFactory"
+        ),
+        None,
+    )
+    if not isinstance(factory, dict) or not isinstance(factory.get("statements"), list):
+        raise ValueError("live OIPFactory statements container was not found")
+    statements = factory["statements"]
+
+    replacement_sets = {
+        "robot": {
+            f"Robot{source}": f"Robot{target}",
+            f"urn:agent-aas:asset-instance:robot{source}": (
+                f"urn:agent-aas:asset-instance:robot{target}"
+            ),
+        },
+        "conveyor": {
+            f"Conveyor{source}": f"Conveyor{target}",
+            f"urn:agent-aas:asset-instance:conveyor{source}": (
+                f"urn:agent-aas:asset-instance:conveyor{target}"
+            ),
+        },
+        "pallet": {
+            f"Pallet{source}": f"Pallet{target}",
+            f"urn:agent-aas:entity:oip-factory01:pallet{source}": (
+                f"urn:agent-aas:entity:oip-factory01:pallet{target}"
+            ),
+        },
+    }
+
+    for kind, model_type in (
+        ("robot", "Entity"),
+        ("conveyor", "Entity"),
+        ("pallet", "Entity"),
+    ):
+        _upsert_json_element(
+            statements,
+            model_type,
+            f"{kind.capitalize()}{source}",
+            f"{kind.capitalize()}{target}",
+            replacement_sets[kind],
+            overwrite=overwrite,
+        )
+        _upsert_json_element(
+            statements,
+            "RelationshipElement",
+            f"HasPart{kind.capitalize()}{source}",
+            f"HasPart{kind.capitalize()}{target}",
+            replacement_sets[kind],
+            overwrite=overwrite,
+        )
+
+    requirement_replacements = {
+        **replacement_sets["conveyor"],
+        **replacement_sets["pallet"],
+        f"Transfer{source}": f"Transfer{target}",
+    }
+    _upsert_json_element(
+        requirements_elements,
+        "SubmodelElementCollection",
+        f"Transfer{source}",
+        f"Transfer{target}",
+        requirement_replacements,
+        overwrite=overwrite,
+    )
+    return hierarchy, requirements
+
+
+def _submodel_repository_url(repository_url: str, submodel_id: str) -> str:
+    encoded = base64.urlsafe_b64encode(submodel_id.encode()).decode().rstrip("=")
+    return f"{repository_url.rstrip('/')}/submodels/{encoded}"
+
+
+def _repository_json(
+    repository_url: str,
+    submodel_id: str,
+    *,
+    method: str = "GET",
+    payload: dict[str, object] | None = None,
+) -> dict[str, object]:
+    data = None if payload is None else json.dumps(payload).encode()
+    request = urllib.request.Request(
+        _submodel_repository_url(repository_url, submodel_id),
+        data=data,
+        method=method,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        body = response.read()
+    if not body:
+        return {}
+    value = json.loads(body)
+    if not isinstance(value, dict):
+        raise ValueError(f"repository returned non-object JSON for {submodel_id}")
+    return value
+
+
+def sync_factory_repository(
+    repository_url: str,
+    source_station: int,
+    target_station: int,
+    *,
+    overwrite: bool,
+) -> None:
+    """Upsert one station into the two mutable live OIPFactory submodels."""
+    original_hierarchy = _repository_json(repository_url, FACTORY_HIERARCHY_ID)
+    original_requirements = _repository_json(repository_url, FACTORY_REQUIREMENTS_ID)
+    hierarchy, requirements = update_factory_repository_models(
+        original_hierarchy,
+        original_requirements,
+        source_station,
+        target_station,
+        overwrite=overwrite,
+    )
+
+    updated_ids: list[str] = []
+    try:
+        _repository_json(
+            repository_url,
+            FACTORY_HIERARCHY_ID,
+            method="PUT",
+            payload=hierarchy,
+        )
+        updated_ids.append(FACTORY_HIERARCHY_ID)
+        _repository_json(
+            repository_url,
+            FACTORY_REQUIREMENTS_ID,
+            method="PUT",
+            payload=requirements,
+        )
+        updated_ids.append(FACTORY_REQUIREMENTS_ID)
+    except Exception:
+        originals = {
+            FACTORY_HIERARCHY_ID: original_hierarchy,
+            FACTORY_REQUIREMENTS_ID: original_requirements,
+        }
+        for submodel_id in reversed(updated_ids):
+            try:
+                _repository_json(
+                    repository_url,
+                    submodel_id,
+                    method="PUT",
+                    payload=originals[submodel_id],
+                )
+            except Exception as rollback_error:
+                print(f"[WARNING] Repository rollback failed: {rollback_error}")
+        raise
+
+    print(
+        f"[SUCCESS] Synchronized station {target_station:02d} into live "
+        f"OIPFactory submodels at {repository_url}"
+    )
+
+
 def duplicate_station(
     aas_dir: Path,
     source_station: int,
     target_station: int,
     *,
     overwrite: bool = False,
+    repository_url: str | None = None,
 ) -> list[Path]:
     """Duplicate station instances and add them to the factory model."""
     source = f"{source_station:02d}"
@@ -531,10 +822,18 @@ def duplicate_station(
     print(f"[PROCESS] Adding station {target} to {factory_path.name}")
     update_factory_package(factory_path, factory_update)
     print(
-        f"[SUCCESS] Added Robot{target}, Conveyor{target}, their HasPart "
-        f"relationships and Transfer{target} to {factory_path}"
+        f"[SUCCESS] Added Robot{target}, Conveyor{target}, Pallet{target}, "
+        f"their HasPart relationships and Transfer{target} to {factory_path}"
     )
     created.append(factory_path)
+
+    if repository_url:
+        sync_factory_repository(
+            repository_url,
+            source_station,
+            target_station,
+            overwrite=overwrite,
+        )
 
     return created
 
@@ -543,7 +842,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Duplicate the current conveyor and robot AASX instances and add "
-            "the station hierarchy and transfer requirement to OIPFactory.aasx."
+            "the robot, conveyor, pallet, hierarchy relationships and transfer "
+            "requirement to OIPFactory.aasx."
         )
     )
     parser.add_argument("target_station", type=station_number)
@@ -564,6 +864,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="replace target packages if they already exist",
     )
+    parser.add_argument(
+        "--repository-url",
+        help=(
+            "also synchronize the updated OIPFactory hierarchy and process "
+            "requirements into a running AAS repository, for example "
+            "http://localhost:8081"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -575,6 +883,7 @@ def main() -> int:
             args.source_station,
             args.target_station,
             overwrite=args.force,
+            repository_url=args.repository_url,
         )
     except (
         ElementTree.ParseError,

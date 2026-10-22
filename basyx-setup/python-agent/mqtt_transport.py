@@ -60,6 +60,7 @@ async def run_agent(config: AgentConfig) -> None:
                     )
 
                     async for message in client.messages:
+                        notification_received_unix_us = time.time_ns() // 1_000
                         topic = str(message.topic)
                         payload = message.payload.decode(errors="replace")
                         if is_operation_reply_topic(topic):
@@ -73,7 +74,7 @@ async def run_agent(config: AgentConfig) -> None:
                                 element_token,
                                 payload,
                                 topic,
-                                time.time_ns() // 1_000,
+                                notification_received_unix_us,
                             )
             except MqttError as exc:
                 print(

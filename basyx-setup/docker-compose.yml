@@ -192,11 +192,9 @@ services:
       - REGISTRY_REFRESH_SECONDS=5
       - SEMANTIC_DISCOVERY_DIAGNOSTIC=true
       - ORCHESTRATOR_LOG_CSV_PATH=/app/orchestrator_logs.csv
-      - RESOURCE_SUB_CSV_PATH=/app/resource_sub.csv
       - MEASUREMENT_RUN_ID=${MEASUREMENT_RUN_ID:-}
     volumes:
       - ../orchestrator_logs.csv:/app/orchestrator_logs.csv
-      - ../resource_sub.csv:/app/resource_sub.csv
 
     restart: always
     depends_on:
@@ -205,4 +203,19 @@ services:
       aas-env:
         condition: service_healthy
 
+  resource-monitor:
+    build:
+      context: ./monitor
+    container_name: resource-monitor
+    environment:
+      INTERVAL_SECONDS: "1"
+      MEASUREMENT_RUN_ID: ${MEASUREMENT_RUN_ID:-manual-run}
+      OUTPUT_PATH: /data/container_resources_${MEASUREMENT_RUN_ID:-manual-run}.csv
+      TARGET_SERVICES: "python-agent,mqtt-aas-bridge,aas-env,aas-discovery,sm-registry,aas-registry,mongo,mosquitto,operation-delegation-service,dashboard-api,aas-web-ui"
+      EXCLUDE_SERVICES: "resource-monitor"
 
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./measurements:/data
+
+    restart: "no"
