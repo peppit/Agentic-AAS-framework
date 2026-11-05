@@ -73,7 +73,6 @@ async def run_agent(config: AgentConfig) -> None:
                                 submodel_token,
                                 element_token,
                                 payload,
-                                topic,
                                 notification_received_unix_us,
                             )
             except MqttError as exc:

@@ -11,14 +11,14 @@ METRIC_HEADERS = [
     "job_id",
     "run_id",
     "trigger_asset_id",
-    "trigger_semantic_id",
-    "process_requirement_id",
-    "required_capability_semantic",
     "selected_resource_id",
     "t1_update_notification_received_unix_us",
     "t2_orchestrator_handling_started_unix_us",
     "t3_resource_selected_reserved_unix_us",
     "t4_operation_dispatch_started_unix_us",
+    "matching_ms",
+    "matching_attempts"
+    "reservation_ms",
     "result",
     "failure_reason",
 ]
@@ -59,9 +59,6 @@ class SemanticMetricsLogger:
                 "job_id": job.job_id,
                 "run_id": self.run_id,
                 "trigger_asset_id": job.trigger_asset_id,
-                "trigger_semantic_id": job.trigger_semantic_id,
-                "process_requirement_id": job.requirement_ref.id_short_path,
-                "required_capability_semantic": job.required_capability_semantic,
                 "selected_resource_id": job.selected_resource_id or "",
                 "t1_update_notification_received_unix_us": (
                     job.t1_update_notification_received_unix_us or ""
@@ -75,6 +72,9 @@ class SemanticMetricsLogger:
                 "t4_operation_dispatch_started_unix_us": (
                     job.t4_operation_dispatch_started_unix_us or ""
                 ),
+                "matching_ms": job.matching_ms,
+                "matching_attempts": job.matching_attempts,
+                "reservation_ms": job.reservation_ms,
                 "result": result,
                 "failure_reason": failure_reason,
             }

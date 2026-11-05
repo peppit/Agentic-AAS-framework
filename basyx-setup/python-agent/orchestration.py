@@ -38,7 +38,6 @@ class ActiveExecution:
     job: ProcessJob
     binding: OperationBinding
     timeout_task: asyncio.Task | None = None
-    operation_started: bool = False
 
 
 def _decode_submodel_identifier(value: str) -> str:
@@ -297,7 +296,6 @@ class FactoryOrchestrator:
         submodel_token: str,
         element_token: str,
         payload: str,
-        mqtt_topic: str = "",
         received_at_unix_us: int | None = None,
     ) -> None:
         handling_started_unix_us = time.time_ns() // 1_000
@@ -505,6 +503,7 @@ class FactoryOrchestrator:
 
     async def process_job(self, job: ProcessJob) -> None:
         matching_started = time.perf_counter()
+        job.matching_attempts += 1
         catalog = await self.catalog_manager.snapshot()
         offers = sorted(
             catalog.capabilities_by_semantic_id.get(
@@ -518,7 +517,7 @@ class FactoryOrchestrator:
         )
         job.candidate_count = len(offers)
         if not offers:
-            job.matching_ms = (time.perf_counter() - matching_started) * 1000
+            job.matching_ms += (time.perf_counter() - matching_started) * 1000
             await self._fail_unreserved(job, "no matching capability")
             return
 
@@ -534,7 +533,7 @@ class FactoryOrchestrator:
             reachable.append(offer)
         job.reachable_candidate_count = len(reachable)
         if not reachable:
-            job.matching_ms = (time.perf_counter() - matching_started) * 1000
+            job.matching_ms += (time.perf_counter() - matching_started) * 1000
             await self._fail_unreserved(job, "candidates but none reachable")
             return
 
@@ -549,7 +548,7 @@ class FactoryOrchestrator:
             available.append(offer)
         job.available_candidate_count = len(available)
         if not available:
-            job.matching_ms = (time.perf_counter() - matching_started) * 1000
+            job.matching_ms += (time.perf_counter() - matching_started) * 1000
             await self._defer_job(
                 job,
                 "candidates reachable but unavailable",
@@ -571,7 +570,7 @@ class FactoryOrchestrator:
                 )
                 continue
             runnable.append((offer, binding))
-        job.matching_ms = (time.perf_counter() - matching_started) * 1000
+        job.matching_ms += (time.perf_counter() - matching_started) * 1000
         if not runnable:
             await self._fail_unreserved(
                 job,
@@ -583,7 +582,7 @@ class FactoryOrchestrator:
         selected_resource_id = await self.reservations.select_and_reserve(
             offer.owner_asset_id for offer, _ in runnable
         )
-        job.reservation_ms = (time.perf_counter() - reservation_started) * 1000
+        job.reservation_ms += (time.perf_counter() - reservation_started) * 1000
         if selected_resource_id is None:
             await self._defer_job(job, "reservation conflict")
             return
@@ -600,7 +599,6 @@ class FactoryOrchestrator:
             f"operation={binding.operation_ref.id_short_path}"
         )
 
-        invocation_started = time.perf_counter()
         # Dispatch boundary: everything before this timestamp belongs to the
         # BaSyx-side request handling and resource-selection path. Persist the
         # measurement only after invoke_operation returns so metrics file I/O
@@ -624,12 +622,10 @@ class FactoryOrchestrator:
                 },
             )
         except Exception as exc:
-            job.invocation_ms = (time.perf_counter() - invocation_started) * 1000
             await self._finish_execution(
                 execution, "failed", f"HTTP invocation failure: {exc}"
             )
             return
-        job.invocation_ms = (time.perf_counter() - invocation_started) * 1000
 
         # A very fast completion reply can finish the job while POST /invoke is
         # still returning. Do not recreate its lifecycle in that case.
@@ -681,7 +677,6 @@ class FactoryOrchestrator:
         if not status and isinstance(acknowledgement.get("success"), bool):
             status = "completed" if acknowledgement["success"] else "failed"
         if status in {"started", "running", "accepted"}:
-            execution.operation_started = True
             return
         if status in {"completed", "complete", "succeeded", "success"}:
             await self._finish_execution(execution, "completed")

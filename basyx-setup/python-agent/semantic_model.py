@@ -84,8 +84,8 @@ class ProcessJob:
     reachable_candidate_count: int = 0
     available_candidate_count: int = 0
     matching_ms: float = 0.0
+    matching_attempts: int = 0
     reservation_ms: float = 0.0
-    invocation_ms: float = 0.0
     t3_resource_selected_reserved_unix_us: int | None = None
     t4_operation_dispatch_started_unix_us: int | None = None
 
