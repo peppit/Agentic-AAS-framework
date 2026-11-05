@@ -98,9 +98,8 @@ class FactoryOrchestrator:
         self.pending_retry_tasks: dict[str, asyncio.Task] = {}
         self._availability_changed = asyncio.Event()
         self.run_id = config.measurement_run_id.strip() or str(uuid.uuid4())
-        self.metrics = SemanticMetricsLogger(
-            config.orchestrator_log_csv_path, self.run_id
-        )
+        self.metrics = SemanticMetricsLogger(config.orchestrator_log_csv_path, self.run_id)
+        self._known_usable_resource_requirements: set[tuple[str, str]] = set()
 
     async def initialize(self) -> None:
         catalog = await self.catalog_manager.snapshot()
@@ -135,7 +134,7 @@ class FactoryOrchestrator:
             await self.http_client.aclose()
 
     async def reconcile_catalog(
-        self, previous: SemanticCatalog, refreshed: SemanticCatalog
+        self, previous: SemanticCatalog, refreshed: SemanticCatalog, catalog_activated_unix_us: int | None = None,
     ) -> None:
         previous_ids = set(previous.assets_by_global_id)
         for definition in refreshed.state_elements_by_ref.values():
@@ -152,6 +151,38 @@ class FactoryOrchestrator:
                 if value is True and trigger_key in refreshed.requirements_by_trigger:
                     self.latched_triggers.add(trigger_key)
 
+        currently_usable = self._usable_resource_requirements(refreshed)
+
+        newly_usable = (
+            currently_usable
+            - self._known_usable_resource_requirements
+        )
+
+        self._known_usable_resource_requirements = currently_usable
+
+        if catalog_activated_unix_us is not None:
+            for resource_id, requirement_id in sorted(newly_usable):
+                usable_unix_us = time.time_ns() // 1000
+
+                event = {
+                    "event": "semantic_resource_usable",
+                    "run_id": self.run_id,
+                    "global_asset_id": resource_id,
+                    "process_requirement": requirement_id,
+                    "catalog_activated_unix_us": (
+                        catalog_activated_unix_us
+                    ),
+                    "usable_unix_us": usable_unix_us,
+                    "catalog_build_ms": (
+                        refreshed.metrics.build_duration_seconds * 1000
+                    ),
+                }
+
+                print(
+                    "[ONBOARDING] " + json.dumps(event),
+                    flush=True,
+                )
+
         for resource_id in sorted(set(refreshed.assets_by_global_id) - previous_ids):
             offered = sorted(
                 {
@@ -165,6 +196,57 @@ class FactoryOrchestrator:
                 f"globalAssetId={resource_id} offeredCapabilities={offered}"
             )
         self._availability_changed.set()
+
+    def _usable_resource_requirements(self, catalog: SemanticCatalog) -> set[tuple[str, str]]:
+        usable: set[tuple[str, str]] = set()
+
+        for requirement in catalog.process_requirements:
+            if (
+                not requirement.source_id
+                or not requirement.target_id
+                or not requirement.required_capability_semantics
+            ):
+                continue
+
+            requirement_id = (
+                requirement.id_short
+                or requirement.requirement_ref.id_short_path
+            )
+
+            for required_semantic in requirement.required_capability_semantics:
+                offers = catalog.capabilities_by_semantic_id.get(
+                    required_semantic, []
+                )
+
+                for offer in offers:
+                    targets = catalog.reachability_by_skill_ref.get(
+                        offer.skill_ref, set()
+                    )
+
+                    if (
+                        requirement.source_id not in targets
+                        or requirement.target_id not in targets
+                    ):
+                        continue
+
+                    if self._state_rejection(offer, catalog):
+                        continue
+
+                    binding = catalog.operation_by_skill_ref.get(
+                        offer.skill_ref
+                    )
+
+                    if binding is None or not binding.submodel_endpoint:
+                        continue
+
+                    if self._parameter_rejection(binding):
+                        continue
+
+                    usable.add(
+                        (offer.owner_asset_id, requirement_id)
+                    )
+
+        return usable
 
     @staticmethod
     def _event_element_candidates(element_token: str) -> list[str]:

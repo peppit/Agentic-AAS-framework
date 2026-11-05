@@ -1,0 +1,24 @@
+IntegrationMs = (UsableUnixUs - RegisteredUnixUs) / 1000
+              = 2,486,584 / 1000
+              = 2,486.584 ms
+
+RegistryToCatalogMs = (CatalogActivatedUnixUs - RegisteredUnixUs) / 1000
+                    = 2,486,529 / 1000
+                    = 2,486.529 ms
+
+CatalogBuildMs = CatalogBuildSeconds × 1000
+               = 0.276007675 × 1000
+               = 276.008 ms
+
+EstimatedRefreshWaitMs = RegistryToCatalogMs - CatalogBuildMs
+                       = 2,486.529 - 276.008
+                       = 2,210.521 ms
+
+ReconciliationMs = (UsableUnixUs - CatalogActivatedUnixUs) / 1000
+                 = 55 / 1000
+                 = 0.055 ms
+
+Consistency check:
+IntegrationMs = RegistryToCatalogMs + ReconciliationMs
+              = 2,486.529 + 0.055
+              = 2,486.584 ms

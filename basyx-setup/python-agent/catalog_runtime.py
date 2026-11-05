@@ -1,6 +1,7 @@
 """Atomic SemanticCatalog snapshots and periodic Registry reconciliation."""
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 
 from config_models import AgentConfig
@@ -8,7 +9,7 @@ from registry_client import RegistryClient
 from semantic_catalog import SemanticCatalog
 
 CatalogCallback = Callable[
-    [SemanticCatalog, SemanticCatalog], Awaitable[None]
+    [SemanticCatalog, SemanticCatalog, int], Awaitable[None]
 ]
 
 
@@ -42,13 +43,12 @@ class CatalogManager:
             self._catalog = catalog
             return previous
 
-    async def refresh_once(
-        self, callback: CatalogCallback | None = None
-    ) -> SemanticCatalog:
+    async def refresh_once(self, callback: CatalogCallback | None = None) -> SemanticCatalog:
         refreshed = await self._discover_catalog(self._config)
         previous = await self.replace(refreshed)
+        catalog_activated_unix_us = time.time_ns() // 1000 
         if callback is not None:
-            await callback(previous, refreshed)
+            await callback(previous, refreshed, catalog_activated_unix_us)
         return refreshed
 
     async def run_refresh_loop(
