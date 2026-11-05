@@ -17,7 +17,7 @@ METRIC_HEADERS = [
     "t3_resource_selected_reserved_unix_us",
     "t4_operation_dispatch_started_unix_us",
     "matching_ms",
-    "matching_attempts"
+    "matching_attempts",
     "reservation_ms",
     "result",
     "failure_reason",
